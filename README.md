@@ -2,7 +2,7 @@
 
 <img src="assets/banner.svg" alt="SSLim — тонкий транспорт IP-пакетов поверх TLS 1.3" width="100%">
 
-[Скачать](https://github.com/doctorBax/govpn-lab/releases/latest) · [Запуск](#запуск) · [Blade](#blade--клиент-для-windows) · [Замеры](#замеры) · [История версий](CHANGELOG.md)
+[Скачать](https://github.com/doctorBax/sslim/releases/latest) · [Запуск](#запуск) · [Blade](#blade--клиент-для-windows) · [Замеры](#замеры) · [История версий](CHANGELOG.md)
 
 </div>
 
@@ -18,7 +18,7 @@ Linux TUN  ←→  Клиент  ═══════ TLS 1.3 ═════�
 
 ## Запуск
 
-Скачайте и распакуйте архив [последнего релиза](https://github.com/doctorBax/govpn-lab/releases/latest) для Linux x86_64 с glibc 2.34 или новее. Для сборки из исходников выполните `cargo build --release --locked`. При локальной сборке исполняемый файл появится в `target/release/sslim`.
+Скачайте и распакуйте архив [последнего релиза](https://github.com/doctorBax/sslim/releases/latest) для Linux x86_64 с glibc 2.34 или новее. Для сборки из исходников выполните `cargo build --release --locked`. При локальной сборке исполняемый файл появится в `target/release/sslim`.
 
 На сервере:
 
