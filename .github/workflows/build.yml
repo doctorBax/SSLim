@@ -16,6 +16,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --locked
       - run: cargo build --release --locked
+      - name: Verify concurrent Linux tunnels
+        run: sudo unshare --net python3 scripts/test-multi-tun.py target/release/sslim
       - run: tar -czf sslim-linux-x86_64.tar.gz -C target/release sslim
       - uses: actions/upload-artifact@v4
         with:
