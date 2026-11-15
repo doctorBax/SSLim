@@ -18,6 +18,7 @@
                 <data android:scheme="sslim" />
             </intent-filter>
         </activity>
+        <activity android:name=".SettingsActivity" android:exported="false" />
         <activity android:name=".ProfileEditorActivity" android:exported="false" />
         <service android:name=".BladeVpn" android:exported="true"
             android:permission="android.permission.BIND_VPN_SERVICE"
