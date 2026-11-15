@@ -57,7 +57,7 @@ def check_reply(sock, address, sequence):
     with sock.makefile("rb") as stream:
         frame_type, length = struct.unpack("!BH", stream.read(3))
         packet = stream.read(length)
-        assert frame_type == 1 and len(packet) == 28
+        assert frame_type == 1 and len(packet) == 28, (frame_type, length, packet.hex())
         assert packet[16:20] == address.packed
         assert packet[20] == 0 and packet[26:28] == struct.pack("!H", sequence)
 

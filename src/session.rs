@@ -377,7 +377,7 @@ async fn relay_checked<S: AsyncRead + AsyncWrite + Unpin>(
             tokio::select! {
                 biased;
                 Some(()) = control.recv() => send(&mut writer, PONG_FRAME).await?,
-                result = tun.batch(&mut packet, &mut frames) => {
+                result = tun.batch(&mut packet, &mut frames, source) => {
                     result?;
                     send(&mut writer, &frames).await?;
                     frames.clear();

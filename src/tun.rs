@@ -50,14 +50,23 @@ impl Tun {
         }
     }
 
-    pub async fn batch(&self, packet: &mut [u8], frames: &mut Vec<u8>) -> io::Result<()> {
+    pub async fn batch(
+        &self,
+        packet: &mut [u8],
+        frames: &mut Vec<u8>,
+        destination: Option<std::net::Ipv4Addr>,
+    ) -> io::Result<()> {
         loop {
             let mut ready = self.0.readable().await?;
             for _ in 0..32 {
                 match ready.try_io(|fd| fd.get_ref().read(packet)) {
                     Ok(Ok(0)) => return Err(io::Error::from(io::ErrorKind::UnexpectedEof)),
                     Ok(Ok(len)) => {
-                        if valid_ip(&packet[..len]) {
+                        if valid_ip(&packet[..len])
+                            && destination.is_none_or(|ip| {
+                                len >= 20 && packet[0] >> 4 == 4 && packet[16..20] == ip.octets()
+                            })
+                        {
                             append_packet(frames, &packet[..len]);
                         }
                     }
