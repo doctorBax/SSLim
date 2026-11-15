@@ -29,7 +29,10 @@ sudo bash install-server.sh vpn.example.com
 
 - `sudo sslim-client add laptop` выдаёт отдельную ссылку для устройства.
 - `sudo sslim-client list` показывает список ключей.
+- `sudo sslim-client link laptop` повторно показывает ссылку. Не отправляйте её посторонним.
+- `sudo sslim-client rotate laptop` меняет ключ и выдаёт новую ссылку. Старый ключ больше не открывает новые сеансы.
 - `sudo sslim-client remove laptop` отзывает ключ для новых подключений.
+- `sudo sslim-client status` показывает состояние службы.
 - Windows: распакуйте ZIP из релиза и запустите `install.ps1` либо используйте команду ниже. Вставьте ссылку в Blade, чтобы подключиться. В следующий раз введите `connect`.
 - Android: скачайте `Blade.apk` из того же релиза, импортируйте ссылку и нажмите стрелку. При первом запуске Android запросит разрешение VPN.
 

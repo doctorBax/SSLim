@@ -120,7 +120,8 @@ public final class MainActivity extends Activity {
         heroPanel.addView(hero, new FrameLayout.LayoutParams(-1, -1));
         ImageView centerArrow = arrow(82, 40, BACKGROUND, MINT, 24);
         heroPanel.addView(centerArrow, new FrameLayout.LayoutParams(dp(82), dp(82), Gravity.CENTER));
-        int heroHeight = getResources().getConfiguration().screenHeightDp < 680 ? 160 : 214;
+        int screenHeight = getResources().getConfiguration().screenHeightDp;
+        int heroHeight = Math.max(168, Math.min(280, screenHeight / 3));
         LinearLayout.LayoutParams heroSize = new LinearLayout.LayoutParams(-1, dp(heroHeight));
         heroSize.topMargin = dp(22);
         content.addView(heroPanel, heroSize);
@@ -256,17 +257,21 @@ public final class MainActivity extends Activity {
         boolean connected = "VPN подключён".equals(status);
         boolean starting = "Подключение…".equals(status);
         boolean stopping = "Отключение…".equals(status);
-        boolean failed = !connected && !starting && !stopping && !"Отключено".equals(status);
-        int tone = failed ? CORAL : connected || starting ? MINT : MUTED;
-        chip.setText(connected ? "В СЕТИ" : starting ? "СОЕДИНЕНИЕ" : stopping ? "ОТКЛЮЧЕНИЕ" : failed ? "СБОЙ" : "НЕ АКТИВЕН");
+        boolean retrying = running && status.startsWith("Переподключение");
+        boolean failed = !connected && !starting && !stopping && !retrying && !"Отключено".equals(status);
+        int tone = failed ? CORAL : connected || starting || retrying ? MINT : MUTED;
+        chip.setText(connected ? "В СЕТИ" : starting ? "СОЕДИНЕНИЕ" : retrying ? "ПОВТОР" :
+            stopping ? "ОТКЛЮЧЕНИЕ" : failed ? "СБОЙ" : "НЕ АКТИВЕН");
         chip.setTextColor(tone);
         chip.setBackground(surface(connected ? 0xff17342a : SURFACE, 20, BORDER));
 
         headline.setText(connected ? "VPN подключён" : starting ? "Подключаемся…" :
-            stopping ? "Отключаемся…" : failed ? "Соединение потеряно" : "VPN выключен");
+            stopping ? "Отключаемся…" : retrying ? "Восстанавливаем связь…" :
+            failed ? "Соединение потеряно" : "VPN выключен");
         details.setText(connected ? "IPv4-трафик проходит через туннель." :
             starting ? "Устанавливаем защищённое соединение." :
-            stopping ? "Завершаем текущий сеанс." : failed ? status : "Нажмите на стрелку, чтобы включить туннель.");
+            stopping ? "Завершаем текущий сеанс." : retrying || failed ? status :
+            "Нажмите на стрелку, чтобы включить туннель.");
 
         hero.setState(connected, starting || stopping || running);
     }
@@ -390,11 +395,12 @@ public final class MainActivity extends Activity {
         private boolean animating;
         private boolean animationVisible = true;
         private long stateSince;
+        private RadialGradient connectedGlow;
+        private RadialGradient connectingGlow;
 
         HeroView(MainActivity activity) {
             super(activity);
             setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-            setLayerType(View.LAYER_TYPE_SOFTWARE, null);
             java.util.Random random = new java.util.Random(7);
             for (int i = 0; i < PARTICLES; i++) {
                 angle[i] = random.nextFloat() * 360f;
@@ -409,8 +415,18 @@ public final class MainActivity extends Activity {
                 connected = nowConnected;
                 animating = nowConnected || nowAnimating;
                 stateSince = SystemClock.elapsedRealtime();
+                invalidate();
             }
             if (animating && animationVisible) postInvalidateOnAnimation();
+        }
+
+        @Override protected void onSizeChanged(int width, int height, int oldWidth, int oldHeight) {
+            super.onSizeChanged(width, height, oldWidth, oldHeight);
+            float[] stops = {0f, 0.55f, 1f};
+            connectedGlow = new RadialGradient(width / 2f, height / 2f, dp(86),
+                new int[]{0x66b7f4cd, 0x267fe4b0, 0x007fe4b0}, stops, android.graphics.Shader.TileMode.CLAMP);
+            connectingGlow = new RadialGradient(width / 2f, height / 2f, dp(86),
+                new int[]{0x5576d9e8, 0x2276d9e8, 0x0076d9e8}, stops, android.graphics.Shader.TileMode.CLAMP);
         }
 
         void setAnimationVisible(boolean visible) {
@@ -428,11 +444,9 @@ public final class MainActivity extends Activity {
             // The glow signals both connection setup and an active tunnel.
             if (animating) {
                 float pulse = 0.78f + 0.22f * (float) Math.sin((t - stateSince) / 290.0);
-                int glowColor = connected ? 0x55b7f4cd : 0x4476d9e8;
-                glow.setShader(new RadialGradient(cx, cy, dp(68) * pulse,
-                    new int[]{glowColor, 0x2276d9e8, 0x0076d9e8},
-                    new float[]{0f, 0.55f, 1f}, android.graphics.Shader.TileMode.CLAMP));
-                canvas.drawCircle(cx, cy, dp(68) * pulse, glow);
+                glow.setShader(connected ? connectedGlow : connectingGlow);
+                glow.setAlpha((int) (255 * pulse));
+                canvas.drawCircle(cx, cy, dp(86), glow);
             }
 
             // Static guide rings (idle and active).

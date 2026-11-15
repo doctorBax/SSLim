@@ -1,6 +1,7 @@
 param(
     [Parameter(Mandatory)][string]$Sdk,
-    [Parameter(Mandatory)][string]$Jdk
+    [Parameter(Mandatory)][string]$Jdk,
+    [string]$SigningStore
 )
 
 $ErrorActionPreference = 'Stop'
@@ -11,7 +12,8 @@ $tools = Join-Path $sdkPath 'build-tools\35.0.0'
 $platform = Join-Path $sdkPath 'platforms\android-35\android.jar'
 $build = Join-Path $PSScriptRoot 'build'
 $tmp = New-Item -ItemType Directory -Path (Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid()))
-$keyStore = Join-Path $build 'blade-signing.jks'
+$keyStore = if ($SigningStore) { (Resolve-Path -LiteralPath $SigningStore).Path } else { Join-Path $build 'blade-signing.jks' }
+$signPassword = if ($SigningStore) { 'env:BLADE_SIGN_PASS' } else { 'pass:android' }
 
 function Run([string]$exe, [string[]]$arguments) {
     & $exe @arguments
@@ -43,7 +45,7 @@ try {
         Run 'keytool.exe' @('-genkeypair','-keystore',$keyStore,'-storepass','android','-keypass','android','-alias','blade','-dname','CN=Blade debug','-keyalg','RSA','-validity','3650')
     }
     $apk = Join-Path $build 'Blade.apk'
-    Run (Join-Path $tools 'apksigner.bat') @('sign','--ks',$keyStore,'--ks-pass','pass:android','--out',$apk,$aligned)
+    Run (Join-Path $tools 'apksigner.bat') @('sign','--ks',$keyStore,'--ks-key-alias','blade','--ks-pass',$signPassword,'--out',$apk,$aligned)
     Run (Join-Path $tools 'apksigner.bat') @('verify',$apk)
     Get-Item -LiteralPath $apk
 } finally {

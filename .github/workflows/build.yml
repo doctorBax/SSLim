@@ -51,12 +51,25 @@ jobs:
           distribution: temurin
           java-version: '17'
       - name: Build APK
+        env:
+          BLADE_SIGN_STORE: ${{ secrets.BLADE_SIGN_STORE }}
+          BLADE_SIGN_PASS: ${{ secrets.BLADE_SIGN_PASS }}
         run: |
           $sdk = $env:ANDROID_HOME
           $manager = Join-Path $sdk 'cmdline-tools/latest/bin/sdkmanager.bat'
           & $manager --sdk_root="$sdk" 'platforms;android-35' 'build-tools;35.0.0'
           if ($LASTEXITCODE -ne 0) { throw 'Android SDK components missing' }
-          ./android/build.ps1 -Sdk $sdk -Jdk $env:JAVA_HOME
+          if ($env:BLADE_SIGN_STORE -and $env:BLADE_SIGN_PASS) {
+            $store = Join-Path $env:RUNNER_TEMP 'blade-signing.p12'
+            try {
+              [IO.File]::WriteAllBytes($store, [Convert]::FromBase64String($env:BLADE_SIGN_STORE))
+              ./android/build.ps1 -Sdk $sdk -Jdk $env:JAVA_HOME -SigningStore $store
+            } finally {
+              Remove-Item -LiteralPath $store -ErrorAction SilentlyContinue
+            }
+          } else {
+            ./android/build.ps1 -Sdk $sdk -Jdk $env:JAVA_HOME
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: Blade-Android

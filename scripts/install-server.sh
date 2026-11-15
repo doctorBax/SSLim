@@ -46,12 +46,20 @@ cat > /usr/local/bin/sslim-client <<'EOF'
 set -eu
 dir=/etc/sslim
 case "${1:-}" in
-  add) [ "$#" -eq 2 ] || exit 2
-       exec sslim clients add --label "$2" --host "$(cat "$dir/hostname")" --ca-file "$dir/ca.pem" --secrets-file "$dir/clients.txt" ;;
+  add|link|rotate)
+       [ "$#" -eq 2 ] || { echo "Usage: sslim-client $1 NAME" >&2; exit 2; }
+       action=$1
+       set -- --label "$2" --host "$(cat "$dir/hostname")" --ca-file "$dir/ca.pem" --secrets-file "$dir/clients.txt"
+       case "$action" in
+         link) set -- "$@" --show ;;
+         rotate) set -- "$@" --rotate ;;
+       esac
+       exec sslim clients add "$@" ;;
   list) exec sslim clients list --secrets-file "$dir/clients.txt" ;;
   remove) [ "$#" -eq 2 ] || exit 2
           exec sslim clients remove "$2" --secrets-file "$dir/clients.txt" ;;
-  *) echo 'Commands: sslim-client add NAME | list | remove NAME' ;;
+  status) exec systemctl --no-pager status sslim.service ;;
+  *) echo 'Commands: sslim-client add NAME | list | link NAME | rotate NAME | remove NAME | status' ;;
 esac
 EOF
 chmod 0755 /usr/local/bin/sslim-client

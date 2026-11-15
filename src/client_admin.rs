@@ -34,6 +34,12 @@ enum ClientAction {
         server_name: Option<String>,
         #[arg(long)]
         ca_file: Option<PathBuf>,
+        /// Replace the existing key for this label
+        #[arg(long, conflicts_with = "show")]
+        rotate: bool,
+        /// Export the current link without changing the key
+        #[arg(long)]
+        show: bool,
     },
     /// List client labels without revealing keys
     List {
@@ -129,6 +135,8 @@ pub fn run(args: ClientAdminArgs) -> Result<Option<String>> {
             port,
             server_name,
             ca_file,
+            rotate,
+            show,
         } => {
             let _lock = lock_file(&secrets_file)?;
             ensure!(
@@ -142,9 +150,15 @@ pub fn run(args: ClientAdminArgs) -> Result<Option<String>> {
             if !entries.is_empty() {
                 KeyRing::from_file(&secrets_file)?;
             }
+            let existing = entries.iter().position(|(name, _)| name == &label);
             ensure!(
-                !entries.iter().any(|(existing, _)| existing == &label),
-                "client {label:?} already exists"
+                existing.is_some() == (rotate || show),
+                "client {label:?} {}",
+                if rotate || show {
+                    "was not found"
+                } else {
+                    "already exists"
+                }
             );
             let ca_base64 = ca_file
                 .map(|path| {
@@ -152,22 +166,33 @@ pub fn run(args: ClientAdminArgs) -> Result<Option<String>> {
                         .with_context(|| format!("reading certificate {}", path.display()))
                 })
                 .transpose()?;
-            let secret = generate_secret()?;
+            let secret_base64 = if show {
+                entries[existing.expect("client exists")].1.clone()
+            } else {
+                STANDARD.encode(generate_secret()?)
+            };
             let profile = Profile {
                 name: label,
                 host: host.clone(),
                 port,
                 server_name: server_name.unwrap_or(host),
                 marker: profile::DEFAULT_MARKER.to_owned(),
-                secret_base64: STANDARD.encode(secret),
+                secret_base64,
                 secret_file: None,
                 ca_file: None,
                 ca_base64,
                 stats: false,
             };
             let uri = profile.to_uri()?;
-            entries.push((profile.name, STANDARD.encode(secret)));
-            write_entries(&secrets_file, &entries)?;
+            if !show {
+                let entry = (profile.name, profile.secret_base64);
+                if let Some(index) = existing {
+                    entries[index] = entry;
+                } else {
+                    entries.push(entry);
+                }
+                write_entries(&secrets_file, &entries)?;
+            }
             Ok(Some(uri))
         }
         ClientAction::List { secrets_file } => {

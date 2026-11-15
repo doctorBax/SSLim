@@ -5,13 +5,12 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$root = if ($PSScriptRoot) { $PSScriptRoot } else { Get-Location }
+$root = $PSScriptRoot
 $temporary = $null
 $required = @("sslim.exe", "blade-routes.ps1", "wintun.dll")
 
 try {
-    $missing = @($required | Where-Object { -not (Test-Path (Join-Path $root $_)) })
-    if ($missing.Count -gt 0) {
+    if (-not $root -or @($required | Where-Object { -not (Test-Path -LiteralPath (Join-Path $root $_)) }).Count -gt 0) {
         Write-Host "Downloading the latest Blade release..."
         $release = Invoke-RestMethod -Headers @{ "User-Agent" = "SSLim-Blade-Installer" } `
             -Uri "https://api.github.com/repos/doctorBax/sslim/releases/latest"
