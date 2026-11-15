@@ -2,10 +2,11 @@
 # Exercise IPv4 and IPv6 over a Rust-to-Rust tunnel in two isolated network namespaces.
 set -euo pipefail
 
-binary=$(realpath "${1:?usage: bash scripts/tun-check.sh path/to/govpn-lab}")
-exec unshare --net bash -s -- "$binary" <<'CHECK'
+binary=$(realpath "${1:?usage: bash scripts/tun-check.sh path/to/sslim}")
+exec unshare --net bash -s -- "$binary" "${2:-tcp}" <<'CHECK'
 set -euo pipefail
 binary=$1
+mode=$2
 work=$(mktemp -d)
 namespace= server= client=
 cleanup() {
@@ -32,7 +33,7 @@ _ephemeral_certificate(root)
 PY
 
 wait_file() {
-    for _ in {1..60}; do
+    for _ in {1..180}; do
         if [[ -s "$1" ]]; then return; fi
         sleep 0.05
     done
@@ -40,7 +41,7 @@ wait_file() {
     return 1
 }
 wait_device() {
-    for _ in {1..60}; do
+    for _ in {1..180}; do
         if "$@" >/dev/null 2>&1; then return; fi
         sleep 0.05
     done
@@ -60,13 +61,25 @@ ip link set govpn-test-a up
 remote ip addr add 198.18.0.2/30 dev govpn-test-b
 remote ip link set govpn-test-b up
 
-remote "$binary" server --host 198.18.0.2 --port 29443 --device tun --tun-name govpn-tun-b \
-    --cert "$work/cert.pem" --key "$work/key.pem" --secret-file "$work/session.bin" \
-    >"$work/server.log" 2>&1 &
+if [[ "$mode" == quic ]]; then
+    server_args=(quic server --listen 198.18.0.2:29443 --tun-name govpn-tun-b)
+else
+    server_args=(server --host 198.18.0.2 --port 29443 --device tun --tun-name govpn-tun-b)
+fi
+if [[ "$mode" == tcp ]]; then
+    client_args=(client --host 198.18.0.2 --port 29443)
+else
+    client_args=(quic client --address 198.18.0.2:29443)
+    if [[ "$mode" == fallback ]]; then
+        client_args+=(--fallback-tcp-port 29443)
+    fi
+fi
+remote "$binary" "${server_args[@]}" --cert "$work/cert.pem" --key "$work/key.pem" \
+    --secret-file "$work/session.bin" >"$work/server.log" 2>&1 &
 server=$!
 wait_file "$work/server.log"
 
-"$binary" client --host 198.18.0.2 --port 29443 --server-name localhost --tun-name govpn-tun-a \
+"$binary" "${client_args[@]}" --server-name localhost --tun-name govpn-tun-a \
     --ca "$work/cert.pem" --secret-file "$work/session.bin" >"$work/client.log" 2>&1 &
 client=$!
 wait_device ip link show govpn-tun-a

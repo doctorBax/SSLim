@@ -38,6 +38,18 @@ impl Tun {
         Ok(Self(unsafe { AsyncFd::register(file) }?))
     }
 
+    pub async fn read(&self, packet: &mut [u8]) -> io::Result<usize> {
+        loop {
+            let mut ready = self.0.readable().await?;
+            match ready.try_io(|fd| fd.get_ref().read(packet)) {
+                Ok(Ok(0)) => return Err(io::Error::from(io::ErrorKind::UnexpectedEof)),
+                Ok(Err(error)) if error.kind() == io::ErrorKind::Interrupted => continue,
+                Ok(result) => return result,
+                Err(_) => continue,
+            }
+        }
+    }
+
     pub async fn batch(&self, packet: &mut [u8], frames: &mut Vec<u8>) -> io::Result<()> {
         loop {
             let mut ready = self.0.readable().await?;

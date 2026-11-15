@@ -5,6 +5,12 @@
 - Проект переименован в SSLim. Бинарник — `sslim`, Windows-клиент — подкоманда `sslim blade` (Blade), Wintun-адаптер — «Blade».
 - Маркер HTTP-апгрейда на проводе заменён: `lab-packet/1` → `sync/1`; ALPN QUIC-транспорта: `govpn-lab/2` → `sslim/2`. Сервер и клиент должны быть одной версии.
 - Страница репозитория обновлена, добавлен баннер `assets/banner.svg`.
+- Blade: профили в `%APPDATA%\sslim\profiles` и подкоманды `import` / `list` / `show` / `remove`; поддержка ссылок `sslim://`; подключение к активному профилю с автопереконнектом (задержка 1–30 с) и ping-keepalive.
+- Blade: маршруты настраивает `scripts/blade-routes.ps1` из репозитория, `-BlockIPv6` закрывает IPv6-утечку firewall-правилом на время туннеля.
+- Сервер: `--secrets-file` с per-client секретами (`label:base64`); неудачная аутентификация по-прежнему выглядит как обычный 404.
+- Команды `sslim keygen` (генерация секрета) и `sslim profile` (ссылка и QR для выдачи клиенту).
+- Blade для Android (`android/`, версия 0.2.0, `ru.doctorbax.blade`): профили в приложении, импорт `sslim://` по клику/из буфера, редактор со всеми полями, свой CA, автопереконнект. Сборка `build.ps1` без gradle.
+- CI: GitHub Actions собирает Windows-пакет (`sslim.exe` + `blade-routes.ps1` + `wintun.dll` + `install.ps1`).
 
 ## v0.2.0
 

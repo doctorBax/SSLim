@@ -42,13 +42,43 @@ Linux TUN  ←→  Клиент  ═══════ TLS 1.3 ═════�
 
 ## Blade — клиент для Windows
 
-`sslim blade` поднимает Wintun-адаптер, направляет весь IPv4-трафик в туннель через 32 маршрута /1–/32 (адрес сервера остаётся на основном шлюзе) и проверяет выходной IP запросом к `https://1.1.1.1/cdn-cgi/trace` с отключёнными прокси. Требуются права администратора, путь до `Wintun.dll` (`--wintun-dll`) и внешний PowerShell-скрипт настройки маршрутов (`--route-script`). Ключ `--stats` выводит скорость в Мбит/с каждую секунду.
+`sslim blade` подключается по профилю из `%APPDATA%\sslim\profiles`, поднимает Wintun-адаптер, направляет весь IPv4-трафик в туннель через 32 маршрута /1–/32 (адрес сервера остаётся на основном шлюзе) и блокирует исходящий IPv6 firewall-правилом, пока туннель активен. Выходной IP проверяется запросом к `https://1.1.1.1/cdn-cgi/trace` с отключёнными прокси. Соединение поддерживается ping-фреймами и переподключается автоматически с задержкой 1–30 с. Требуются права администратора и `wintun.dll` (ищется рядом с `sslim.exe`, либо `--wintun-dll`).
 
 ```bash
-./sslim blade --address 203.0.113.10 --port 9443 \
-  --server-name vpn.example.com --secret-file /path/to/session.bin \
-  --wintun-dll C:\Wintun\bin\amd64\wintun.dll --route-script route.ps1
+sslim blade import "sslim://vpn.example.com:9443?sni=vpn.example.com&k=BASE64&n=home"
+sslim blade list
+sslim blade --stats        # подключиться активным профилем
+sslim blade show home --qr # напечатать профиль QR-кодом
+sslim blade remove home
 ```
+
+Параметры активного профиля перекрываются флагами: `--host`, `--port`, `--server-name`, `--secret-file`, `--ca`, `--wintun-dll`, `--route-script`, `--stats`. Маршруты настраивает `blade-routes.ps1` — при установке он лежит рядом с `sslim.exe`.
+
+## Профили и раздача
+
+Каждому клиенту выдаётся собственный секрет — утёкший отзывается удалением строки, остальные клиенты продолжают работать.
+
+На сервере:
+
+```bash
+sslim keygen --output alice.bin              # секрет клиента
+sslim server --secrets-file secrets.txt ...  # строки label:base64, по одной на клиента
+sslim profile --host vpn.example.com --secret-file alice.bin --label alice
+```
+
+`sslim profile` печатает `sslim://`-ссылку и QR-код — передайте её клиенту любым способом. Ссылка содержит только данные этого клиента.
+
+## Blade для Android
+
+Приложение в каталоге `android/` — то же транспортное ядро, профили хранятся в приложении, ничего не зашито в сборку. Профили импортируются кликом по `sslim://`-ссылке, из буфера или заполняются вручную; всё редактируемо. Сборка:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File android\build.ps1 `
+  -Sdk C:\path\to\android-sdk `
+  -Jdk C:\path\to\jdk-17
+```
+
+Подписанный APK появится в `android\build\Blade.apk`. Требуется Android 10+.
 
 ## Замеры
 

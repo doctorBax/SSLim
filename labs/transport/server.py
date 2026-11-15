@@ -80,7 +80,7 @@ class TunnelServer:
                     token.strip().lower()
                     for token in headers.get("connection", "").split(",")
                 }
-                and headers.get("upgrade", "").lower() == "lab-packet/1"
+                and headers.get("upgrade", "").lower() == "sync/1"
                 and self._replay_guard.verify(
                     self._secret,
                     headers.get("x-session-time", ""),
@@ -98,7 +98,7 @@ class TunnelServer:
             device = self._device_factory()
             writer.write(
                 b"HTTP/1.1 101 Switching Protocols\r\n"
-                b"Connection: Upgrade\r\nUpgrade: lab-packet/1\r\n\r\n"
+                b"Connection: Upgrade\r\nUpgrade: sync/1\r\n\r\n"
             )
             await writer.drain()
             uplink = asyncio.create_task(self._uplink(reader, writer, device))

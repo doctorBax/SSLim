@@ -85,7 +85,7 @@ async def connect(
         tag = make_tag(secret, timestamp, nonce)
         request = (
             f"POST /connect HTTP/1.1\r\nHost: {server_name}\r\n"
-            "Connection: Upgrade\r\nUpgrade: lab-packet/1\r\n"
+            "Connection: Upgrade\r\nUpgrade: sync/1\r\n"
             f"X-Session-Time: {timestamp}\r\n"
             f"X-Session-Nonce: {nonce}\r\nX-Session-Tag: {tag}\r\n\r\n"
         ).encode("ascii")

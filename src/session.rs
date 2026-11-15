@@ -1,28 +1,44 @@
+#[cfg(target_os = "linux")]
 use std::collections::HashMap;
+#[cfg(target_os = "linux")]
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::{Result, bail, ensure};
+#[cfg(target_os = "linux")]
 use clap::ValueEnum;
 use ring::hmac;
 use tokio::io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
+
 use tokio::net::TcpStream;
+#[cfg(target_os = "linux")]
 use tokio::sync::mpsc;
 use tokio::time::timeout;
-use tokio_rustls::rustls::{ProtocolVersion, pki_types::ServerName};
-use tokio_rustls::{TlsAcceptor, TlsConnector};
+use tokio_rustls::rustls::pki_types::ServerName;
+#[cfg(target_os = "linux")]
+use tokio_rustls::rustls::ProtocolVersion;
+#[cfg(target_os = "linux")]
+use tokio_rustls::TlsAcceptor;
+use tokio_rustls::TlsConnector;
 
-use crate::auth::{ReplayGuard, credentials};
+use crate::auth::credentials;
+#[cfg(target_os = "linux")]
+use crate::auth::{KeyRing, ReplayGuard};
+#[cfg(target_os = "linux")]
 use crate::protocol::{
     CLOSE, FrameReader, MAX_PACKET, PACKET, PING, PONG_FRAME, append_packet, icmp_reply,
 };
+#[cfg(target_os = "linux")]
 use crate::tun::Tun;
 
+#[cfg(target_os = "linux")]
 const UPGRADE: &[u8] =
-    b"HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: lab-packet/1\r\n\r\n";
+    b"HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: sync/1\r\n\r\n";
+#[cfg(target_os = "linux")]
 const PUBLIC_PAGE: &[u8] = b"<!doctype html><title>Service</title><p>Service available.</p>";
 const IO_TIMEOUT: Duration = Duration::from_secs(5);
 
+#[cfg(target_os = "linux")]
 #[derive(Clone, Copy, Debug, ValueEnum)]
 pub enum Device {
     Echo,
@@ -42,6 +58,7 @@ async fn headers(input: &mut (impl AsyncRead + Unpin)) -> Result<Vec<u8>> {
     bail!("headers too large");
 }
 
+#[cfg(target_os = "linux")]
 struct Request<'a> {
     method: &'a str,
     path: &'a str,
@@ -49,6 +66,7 @@ struct Request<'a> {
     headers: HashMap<String, &'a str>,
 }
 
+#[cfg(target_os = "linux")]
 impl<'a> Request<'a> {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let mut lines = std::str::from_utf8(bytes)?.split("\r\n");
@@ -91,7 +109,7 @@ impl<'a> Request<'a> {
         self.method == "POST"
             && self.path == "/connect"
             && self.version == "HTTP/1.1"
-            && self.get("upgrade").eq_ignore_ascii_case("lab-packet/1")
+            && self.get("upgrade").eq_ignore_ascii_case("sync/1")
             && self
                 .get("connection")
                 .split(',')
@@ -104,6 +122,7 @@ async fn send(writer: &mut (impl AsyncWrite + Unpin), data: &[u8]) -> io::Result
     writer.flush().await
 }
 
+#[cfg(target_os = "linux")]
 async fn answer(
     stream: &mut (impl AsyncWrite + Unpin),
     status: &str,
@@ -138,7 +157,7 @@ pub async fn connect(
     );
     let (time, nonce, tag) = credentials(key)?;
     let request = format!(
-        "POST /connect HTTP/1.1\r\nHost: {server_name}\r\nConnection: Upgrade\r\nUpgrade: lab-packet/1\r\nX-Session-Time: {time}\r\nX-Session-Nonce: {nonce}\r\nX-Session-Tag: {tag}\r\n\r\n"
+        "POST /connect HTTP/1.1\r\nHost: {server_name}\r\nConnection: Upgrade\r\nUpgrade: sync/1\r\nX-Session-Time: {time}\r\nX-Session-Nonce: {nonce}\r\nX-Session-Tag: {tag}\r\n\r\n"
     );
     timeout(IO_TIMEOUT, send(&mut stream, request.as_bytes())).await??;
     let response = timeout(IO_TIMEOUT, headers(&mut stream)).await??;
@@ -149,14 +168,16 @@ pub async fn connect(
     Ok(stream)
 }
 
+#[cfg(target_os = "linux")]
 pub struct Server {
     pub acceptor: TlsAcceptor,
-    pub key: hmac::Key,
-    pub replay: Mutex<ReplayGuard>,
+    pub ring: KeyRing,
+    pub replay: Mutex<HashMap<String, ReplayGuard>>,
     pub device: Device,
     pub tun_name: String,
 }
 
+#[cfg(target_os = "linux")]
 impl Server {
     pub async fn handle(self: Arc<Self>, tcp: TcpStream) -> Result<()> {
         tcp.set_nodelay(true)?;
@@ -167,15 +188,26 @@ impl Server {
         let Ok(request) = Request::parse(&raw) else {
             return answer(&mut stream, "400 Bad Request", b"Bad request", false).await;
         };
-        let authorized = tls13
-            && request.is_upgrade()
-            && self.replay.lock().expect("replay lock poisoned").verify(
-                &self.key,
-                request.get("x-session-time"),
-                request.get("x-session-nonce"),
-                request.get("x-session-tag"),
-            );
-        if !authorized {
+        let verified = if tls13 && request.is_upgrade() {
+            self.ring
+                .verify(
+                    request.get("x-session-time"),
+                    request.get("x-session-nonce"),
+                    request.get("x-session-tag"),
+                )
+                .map(|verified| {
+                    let mut guards = self.replay.lock().expect("replay lock poisoned");
+                    guards
+                        .entry(verified.label.to_owned())
+                        .or_default()
+                        .record(verified.nonce)
+                        .then_some(verified)
+                })
+                .flatten()
+        } else {
+            None
+        };
+        if verified.is_none() {
             return if matches!(request.method, "GET" | "HEAD") && request.path == "/" {
                 answer(&mut stream, "200 OK", PUBLIC_PAGE, request.method == "HEAD").await
             } else {
@@ -200,6 +232,7 @@ impl Server {
     }
 }
 
+#[cfg(target_os = "linux")]
 pub async fn relay<S: AsyncRead + AsyncWrite + Unpin>(stream: S, tun: Tun) -> Result<()> {
     let (reader, mut writer) = io::split(stream);
     let mut reader = FrameReader::new(reader);
@@ -237,6 +270,7 @@ pub async fn relay<S: AsyncRead + AsyncWrite + Unpin>(stream: S, tun: Tun) -> Re
     }
 }
 
+#[cfg(target_os = "linux")]
 async fn echo<S: AsyncRead + AsyncWrite + Unpin>(stream: S, device: Device) -> Result<()> {
     let (read, mut write) = io::split(stream);
     let mut reader = FrameReader::new(read);
