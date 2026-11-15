@@ -488,11 +488,7 @@ pub async fn run(args: BladeArgs) -> Result<()> {
             }
             let name = profile.name.clone();
             let path = save_imported_profile(profile)?;
-            println!(
-                "{OK_MARK} profile {:?} saved to {}",
-                name,
-                path.display()
-            );
+            println!("{OK_MARK} profile {:?} saved to {}", name, path.display());
         }
         Some(BladeCommand::List) => {
             let profiles = profile::list()?;
@@ -676,7 +672,7 @@ pub async fn console() -> Result<()> {
             continue;
         };
 
-        run(BladeArgs {
+        if let Err(error) = run(BladeArgs {
             command: None,
             connect: ConnectArgs {
                 profile: Some(profile_name),
@@ -690,7 +686,10 @@ pub async fn console() -> Result<()> {
                 stats: Some(true),
             },
         })
-        .await?;
+        .await
+        {
+            eprintln!("Не удалось подключиться: {error:#}");
+        }
     }
 }
 

@@ -24,6 +24,7 @@ if (-not $InterfaceIndex -or -not $ServerIP -or -not $Prefixes) {
 }
 
 $existing = Get-NetIPAddress -InterfaceIndex $InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue
+Set-NetIPInterface -InterfaceIndex $InterfaceIndex -AddressFamily IPv4 -NlMtuBytes 1280 -PolicyStore ActiveStore
 if (-not $existing) {
     New-NetIPAddress -InterfaceIndex $InterfaceIndex -IPAddress "10.253.0.2" -PrefixLength 32 -PolicyStore ActiveStore -ErrorAction Stop | Out-Null
 }

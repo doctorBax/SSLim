@@ -173,6 +173,7 @@ public final class ProfileEditorActivity extends Activity {
         }
         try {
             ProfileStore.Profile parsed = ProfileStore.fromUri(source);
+            editingMarker = parsed.marker;
             fill(parsed);
             toast("Поля заполнены из ссылки");
         } catch (Exception error) {

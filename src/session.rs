@@ -206,19 +206,17 @@ impl Server {
                     request.get("x-session-nonce"),
                     request.get("x-session-tag"),
                 )
-                .map(|verified| {
+                .is_some_and(|verified| {
                     let mut guards = self.replay.lock().expect("replay lock poisoned");
                     guards
                         .entry(verified.label.to_owned())
                         .or_default()
                         .record(verified.nonce)
-                        .then_some(verified)
                 })
-                .flatten()
         } else {
-            None
+            false
         };
-        if verified.is_none() {
+        if !verified {
             return if matches!(request.method, "GET" | "HEAD") && request.path == "/" {
                 answer(&mut stream, "200 OK", PUBLIC_PAGE, request.method == "HEAD").await
             } else {
