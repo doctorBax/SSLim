@@ -5,6 +5,7 @@
 param(
     [int]$InterfaceIndex,
     [string]$ServerIP,
+    [ipaddress]$ClientIP = '10.253.0.2',
     [string]$Prefixes,
     [switch]$BlockIPv6,
     [switch]$Revert
@@ -27,7 +28,7 @@ $existing = Get-NetIPAddress -InterfaceIndex $InterfaceIndex -AddressFamily IPv4
 Set-NetIPInterface -InterfaceIndex $InterfaceIndex -AddressFamily IPv4 -NlMtuBytes 1280 -PolicyStore ActiveStore
 Set-NetIPInterface -InterfaceIndex $InterfaceIndex -AddressFamily IPv4 -AutomaticMetric Disabled -InterfaceMetric 5 -PolicyStore ActiveStore
 if (-not $existing) {
-    New-NetIPAddress -InterfaceIndex $InterfaceIndex -IPAddress "10.253.0.2" -PrefixLength 32 -PolicyStore ActiveStore -ErrorAction Stop | Out-Null
+    New-NetIPAddress -InterfaceIndex $InterfaceIndex -IPAddress $ClientIP.IPAddressToString -PrefixLength 32 -PolicyStore ActiveStore -ErrorAction Stop | Out-Null
 }
 
 foreach ($prefix in $Prefixes -split ',') {

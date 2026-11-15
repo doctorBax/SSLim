@@ -245,8 +245,9 @@ public final class BladeVpn extends VpnService {
                 phase = "авторизация";
                 DataInputStream input = new DataInputStream(new BufferedInputStream(tls.getInputStream(), 32 * 1024));
                 DataOutputStream output = new DataOutputStream(tls.getOutputStream());
+                final String address;
                 try {
-                    authenticate(input, output, profile);
+                    address = authenticate(input, output, profile);
                 } catch (EOFException error) {
                     throw new IOException("Сервер отклонил соединение", error);
                 }
@@ -257,7 +258,7 @@ public final class BladeVpn extends VpnService {
                 synchronized (this) {
                     if (stopping) return;
                     device = new Builder().setSession("Blade")
-                        .setMtu(MTU).addAddress("10.253.0.2", 32)
+                        .setMtu(MTU).addAddress(address, 32)
                         .addRoute("0.0.0.0", 0)
                         .addDnsServer("1.1.1.1").addDnsServer("9.9.9.9")
                         .setBlocking(false).establish();
@@ -388,7 +389,7 @@ public final class BladeVpn extends VpnService {
         return false;
     }
 
-    private void authenticate(DataInputStream input, DataOutputStream output,
+    private String authenticate(DataInputStream input, DataOutputStream output,
                               ProfileStore.Profile profile) throws Exception {
         byte[] nonceBytes = new byte[16];
         new SecureRandom().nextBytes(nonceBytes);
@@ -400,7 +401,8 @@ public final class BladeVpn extends VpnService {
             .getBytes(StandardCharsets.US_ASCII)));
         String request = "POST /connect HTTP/1.1\r\nHost: " + profile.serverName
             + "\r\nConnection: Upgrade\r\nUpgrade: " + profile.marker + "\r\nX-Session-Time: " + timestamp
-            + "\r\nX-Session-Nonce: " + nonce + "\r\nX-Session-Tag: " + tag + "\r\n\r\n";
+            + "\r\nX-Session-Nonce: " + nonce + "\r\nX-Session-Tag: " + tag
+            + "\r\nX-Session-Address: auto\r\n\r\n";
         output.write(request.getBytes(StandardCharsets.US_ASCII));
         output.flush();
         StringBuilder response = new StringBuilder();
@@ -410,7 +412,19 @@ public final class BladeVpn extends VpnService {
             response.append((char) value);
             tail = (tail << 8) | value;
             if (tail == 0x0d0a0d0a) {
-                if (response.indexOf("HTTP/1.1 101 Switching Protocols\r\n") == 0) return;
+                if (response.indexOf("HTTP/1.1 101 Switching Protocols\r\n") == 0) {
+                    String header = "X-Session-Address:";
+                    for (String line : response.toString().split("\r\n")) {
+                        if (line.regionMatches(true, 0, header, 0, header.length())) {
+                            String address = line.substring(header.length()).trim();
+                            if (!address.matches("10\\.253\\.[0-9]{1,3}\\.[0-9]{1,3}")) {
+                                throw new IOException("Invalid tunnel address");
+                            }
+                            return address;
+                        }
+                    }
+                    return "10.253.0.2";
+                }
                 break;
             }
         }

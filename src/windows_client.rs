@@ -17,7 +17,7 @@ use crate::auth::key_from_bytes;
 use crate::client_tls;
 use crate::profile::{self, Profile};
 use crate::protocol::{CLOSE, FrameReader, PACKET, PING, PONG_FRAME, append_packet, valid_ip};
-use crate::session::connect;
+use crate::session::connect_with_address;
 
 const KEEPALIVE: Duration = Duration::from_secs(20);
 const READ_IDLE: Duration = Duration::from_secs(90);
@@ -280,7 +280,7 @@ fn public_prefixes(server: Ipv4Addr) -> String {
         .join(",")
 }
 
-async fn configure(script: &Path, index: u32, server: Ipv4Addr) -> Result<()> {
+async fn configure(script: &Path, index: u32, server: Ipv4Addr, address: Ipv4Addr) -> Result<()> {
     run_route_script(
         script,
         [
@@ -288,6 +288,8 @@ async fn configure(script: &Path, index: u32, server: Ipv4Addr) -> Result<()> {
             &index.to_string(),
             "-ServerIP",
             &server.to_string(),
+            "-ClientIP",
+            &address.to_string(),
             "-Prefixes",
             &public_prefixes(server),
             "-BlockIPv6",
@@ -391,7 +393,7 @@ async fn connect_once(resolved: &Resolved) -> Result<()> {
         profile.host, profile.port, profile.server_name
     );
     let tls = client_tls(profile.ca_file.as_deref())?;
-    let mut stream = connect(
+    let (mut stream, address) = connect_with_address(
         &profile.host,
         profile.port,
         &profile.server_name,
@@ -413,6 +415,7 @@ async fn connect_once(resolved: &Resolved) -> Result<()> {
         &route_script,
         adapter.get_adapter_index()?,
         resolved.server_ip,
+        address,
     )
     .await?;
     let mut reader = Reader::start(session.clone())?;

@@ -102,6 +102,9 @@ enum Command {
         device: Device,
         #[arg(long, default_value = "labtun0")]
         tun_name: String,
+        /// Allocate independent IPv4 TUN interfaces to compatible clients
+        #[arg(long)]
+        multi_tun: bool,
         /// Linux TCP congestion control algorithm for connections accepted by this listener
         #[arg(long)]
         congestion_control: Option<String>,
@@ -276,6 +279,7 @@ async fn main() -> Result<()> {
             secrets_file,
             device,
             tun_name,
+            multi_tun,
             congestion_control,
         } => {
             let ring = match &secrets_file {
@@ -300,6 +304,8 @@ async fn main() -> Result<()> {
                 replay: Mutex::new(HashMap::new()),
                 device,
                 tun_name,
+                multi_tun,
+                next_address: std::sync::atomic::AtomicU32::new(3),
             });
             let listener = TcpListener::bind((host.as_str(), port)).await?;
             if let Some(algorithm) = congestion_control {

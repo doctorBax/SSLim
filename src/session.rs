@@ -1,5 +1,6 @@
 #[cfg(target_os = "linux")]
 use std::collections::HashMap;
+use std::net::Ipv4Addr;
 #[cfg(target_os = "linux")]
 use std::path::PathBuf;
 #[cfg(target_os = "linux")]
@@ -151,6 +152,40 @@ pub async fn connect(
     key: &hmac::Key,
     marker: &str,
 ) -> Result<BufReader<tokio_rustls::client::TlsStream<TcpStream>>> {
+    Ok(
+        connect_inner(host, port, server_name, connector, key, marker, false)
+            .await?
+            .0,
+    )
+}
+
+#[cfg(windows)]
+pub async fn connect_with_address(
+    host: &str,
+    port: u16,
+    server_name: &str,
+    connector: TlsConnector,
+    key: &hmac::Key,
+    marker: &str,
+) -> Result<(
+    BufReader<tokio_rustls::client::TlsStream<TcpStream>>,
+    Ipv4Addr,
+)> {
+    connect_inner(host, port, server_name, connector, key, marker, true).await
+}
+
+async fn connect_inner(
+    host: &str,
+    port: u16,
+    server_name: &str,
+    connector: TlsConnector,
+    key: &hmac::Key,
+    marker: &str,
+    dynamic_address: bool,
+) -> Result<(
+    BufReader<tokio_rustls::client::TlsStream<TcpStream>>,
+    Ipv4Addr,
+)> {
     let name = ServerName::try_from(server_name.to_owned())?;
     let tcp = timeout(Duration::from_secs(10), TcpStream::connect((host, port))).await??;
     tcp.set_nodelay(true)?;
@@ -160,7 +195,12 @@ pub async fn connect(
     );
     let (time, nonce, tag) = credentials(key)?;
     let request = format!(
-        "POST /connect HTTP/1.1\r\nHost: {server_name}\r\nConnection: Upgrade\r\nUpgrade: {marker}\r\nX-Session-Time: {time}\r\nX-Session-Nonce: {nonce}\r\nX-Session-Tag: {tag}\r\n\r\n"
+        "POST /connect HTTP/1.1\r\nHost: {server_name}\r\nConnection: Upgrade\r\nUpgrade: {marker}\r\nX-Session-Time: {time}\r\nX-Session-Nonce: {nonce}\r\nX-Session-Tag: {tag}\r\n{}\r\n",
+        if dynamic_address {
+            "X-Session-Address: auto\r\n"
+        } else {
+            ""
+        }
     );
     timeout(IO_TIMEOUT, send(&mut stream, request.as_bytes())).await??;
     let response = timeout(IO_TIMEOUT, headers(&mut stream)).await??;
@@ -168,7 +208,14 @@ pub async fn connect(
         response.starts_with(b"HTTP/1.1 101 Switching Protocols\r\n"),
         "server rejected the session"
     );
-    Ok(stream)
+    let address = std::str::from_utf8(&response)?
+        .split("\r\n")
+        .filter_map(|line| line.split_once(':'))
+        .find(|(name, _)| name.eq_ignore_ascii_case("X-Session-Address"))
+        .map(|(_, value)| value.trim().parse::<Ipv4Addr>())
+        .transpose()?
+        .unwrap_or(Ipv4Addr::new(10, 253, 0, 2));
+    Ok((stream, address))
 }
 
 #[cfg(target_os = "linux")]
@@ -179,6 +226,8 @@ pub struct Server {
     pub replay: Mutex<HashMap<String, ReplayGuard>>,
     pub device: Device,
     pub tun_name: String,
+    pub multi_tun: bool,
+    pub next_address: std::sync::atomic::AtomicU32,
 }
 
 #[cfg(target_os = "linux")]
@@ -229,6 +278,51 @@ impl Server {
                 .await
             };
         }
+        if matches!(self.device, Device::Tun)
+            && self.multi_tun
+            && request.get("x-session-address") == "auto"
+        {
+            let id = self
+                .next_address
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if id > u16::MAX as u32 - 1 {
+                return answer(
+                    &mut stream,
+                    "503 Service Unavailable",
+                    b"Address pool exhausted",
+                    false,
+                )
+                .await;
+            }
+            let address = Ipv4Addr::from(0x0afd_0000 | id);
+            let name = format!("sslimd{id:04x}");
+            let tun = Tun::open(&name)?;
+            let peer = format!("{address}/32");
+            for args in [
+                [
+                    "address",
+                    "replace",
+                    "10.253.0.1",
+                    "peer",
+                    &peer,
+                    "dev",
+                    &name,
+                ]
+                .as_slice(),
+                ["link", "set", "dev", &name, "mtu", "1280", "up"].as_slice(),
+            ] {
+                let status = tokio::process::Command::new("ip")
+                    .args(args)
+                    .status()
+                    .await?;
+                ensure!(status.success(), "failed to configure tunnel {name}");
+            }
+            let response = format!(
+                "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: sync/1\r\nX-Session-Address: {address}\r\n\r\n"
+            );
+            timeout(IO_TIMEOUT, send(&mut stream, response.as_bytes())).await??;
+            return relay_checked(stream, tun, Some(address)).await;
+        }
         let tun = match self.device {
             Device::Tun => Some(Tun::open(&self.tun_name)?),
             _ => None,
@@ -243,13 +337,28 @@ impl Server {
 
 #[cfg(target_os = "linux")]
 pub async fn relay<S: AsyncRead + AsyncWrite + Unpin>(stream: S, tun: Tun) -> Result<()> {
+    relay_checked(stream, tun, None).await
+}
+
+#[cfg(target_os = "linux")]
+async fn relay_checked<S: AsyncRead + AsyncWrite + Unpin>(
+    stream: S,
+    tun: Tun,
+    source: Option<Ipv4Addr>,
+) -> Result<()> {
     let (reader, mut writer) = io::split(stream);
     let mut reader = FrameReader::new(reader);
     let (pongs, mut control) = mpsc::channel::<()>(16);
     let from_tls = async {
         loop {
             match reader.next().await? {
-                (PACKET, packet) => tun.write(packet).await?,
+                (PACKET, packet)
+                    if source.is_none_or(|ip| {
+                        packet.len() >= 20 && packet[0] >> 4 == 4 && packet[12..16] == ip.octets()
+                    }) =>
+                {
+                    tun.write(packet).await?
+                }
                 (PING, _) => {
                     pongs.send(()).await?;
                 }

@@ -26,7 +26,7 @@ enum ClientAction {
         label: String,
         #[arg(long)]
         host: String,
-        #[arg(long)]
+        #[arg(long, default_value = "/etc/sslim/clients.txt")]
         secrets_file: PathBuf,
         #[arg(long, default_value_t = profile::DEFAULT_PORT)]
         port: u16,
@@ -43,13 +43,13 @@ enum ClientAction {
     },
     /// List client labels without revealing keys
     List {
-        #[arg(long)]
+        #[arg(long, default_value = "/etc/sslim/clients.txt")]
         secrets_file: PathBuf,
     },
     /// Revoke one client key
     Remove {
         label: String,
-        #[arg(long)]
+        #[arg(long, default_value = "/etc/sslim/clients.txt")]
         secrets_file: PathBuf,
     },
 }

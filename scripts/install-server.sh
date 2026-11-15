@@ -76,7 +76,17 @@ if [[ $1 == up ]]; then
   iptables -w -I FORWARD -i sslim0 -s 10.253.0.2/32 -m comment --comment sslim -j ACCEPT
   iptables -w -I FORWARD -o sslim0 -d 10.253.0.2/32 -m conntrack --ctstate ESTABLISHED,RELATED -m comment --comment sslim -j ACCEPT
   iptables -w -t nat -A POSTROUTING -s 10.253.0.2/32 ! -o sslim0 -m comment --comment sslim -j MASQUERADE
+  iptables -w -I INPUT -i sslimd+ -j DROP
+  iptables -w -I FORWARD -i sslim+ -o sslim+ -j DROP
+  iptables -w -I FORWARD -i sslimd+ ! -o sslim+ -s 10.253.0.0/16 -j ACCEPT
+  iptables -w -I FORWARD ! -i sslim+ -o sslimd+ -d 10.253.0.0/16 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+  iptables -w -t nat -A POSTROUTING -s 10.253.0.0/16 ! -o sslim+ -m comment --comment sslim-multi -j MASQUERADE
 else
+  iptables -w -t nat -D POSTROUTING -s 10.253.0.0/16 ! -o sslim+ -m comment --comment sslim-multi -j MASQUERADE || true
+  iptables -w -D FORWARD ! -i sslim+ -o sslimd+ -d 10.253.0.0/16 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT || true
+  iptables -w -D FORWARD -i sslimd+ ! -o sslim+ -s 10.253.0.0/16 -j ACCEPT || true
+  iptables -w -D FORWARD -i sslim+ -o sslim+ -j DROP || true
+  iptables -w -D INPUT -i sslimd+ -j DROP || true
   iptables -w -t nat -D POSTROUTING -s 10.253.0.2/32 ! -o sslim0 -m comment --comment sslim -j MASQUERADE || true
   iptables -w -D FORWARD -o sslim0 -d 10.253.0.2/32 -m conntrack --ctstate ESTABLISHED,RELATED -m comment --comment sslim -j ACCEPT || true
   iptables -w -D FORWARD -i sslim0 -s 10.253.0.2/32 -m comment --comment sslim -j ACCEPT || true
@@ -92,7 +102,7 @@ Wants=network-online.target
 
 [Service]
 ExecStartPre=/etc/sslim/network up
-ExecStart=/usr/local/bin/sslim server --host 0.0.0.0 --device tun --tun-name sslim0 --cert /etc/sslim/server.pem --key /etc/sslim/server.key --secrets-file /etc/sslim/clients.txt
+ExecStart=/usr/local/bin/sslim server --host 0.0.0.0 --device tun --tun-name sslim0 --multi-tun --cert /etc/sslim/server.pem --key /etc/sslim/server.key --secrets-file /etc/sslim/clients.txt
 ExecStopPost=/etc/sslim/network down
 Restart=on-failure
 RestartSec=3
