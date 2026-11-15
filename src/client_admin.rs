@@ -94,6 +94,7 @@ fn entries(path: &Path) -> Result<Vec<(String, String)>> {
         let (label, secret) = line.split_once(':').with_context(|| {
             format!("{}:{} is not label:base64", path.display(), line_number + 1)
         })?;
+        let (label, secret) = (label.trim(), secret.trim());
         ensure!(
             !entries.iter().any(|(existing, _)| existing == label),
             "duplicate client label {label:?}"
@@ -104,7 +105,6 @@ fn entries(path: &Path) -> Result<Vec<(String, String)>> {
 }
 
 fn write_entries(path: &Path, entries: &[(String, String)]) -> Result<()> {
-    ensure!(!entries.is_empty(), "at least one client must remain");
     let parent = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())

@@ -106,7 +106,8 @@ cat > "$dir/network" <<'EOF'
 set -euo pipefail
 if [[ $1 == up ]]; then
   # Addresses restart at the beginning of the pool; discard previous NAT state.
-  if [[ -n $(conntrack -L -f ipv4 -s 10.253.0.0/16) ]]; then
+  entries=$(conntrack -L -f ipv4 -s 10.253.0.0/16)
+  if [[ -n $entries ]]; then
     conntrack -D -f ipv4 -s 10.253.0.0/16
   fi
   ip tuntap add dev sslim0 mode tun

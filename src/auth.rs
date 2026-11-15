@@ -79,7 +79,6 @@ impl KeyRing {
             );
             keys.push((label.to_owned(), key_from_bytes(&secret)));
         }
-        ensure!(!keys.is_empty(), "{}: no secrets found", path.display());
         Ok(Self { keys })
     }
 
