@@ -104,7 +104,10 @@ fn resolve(args: &BladeArgs) -> Result<Resolved> {
     } else if flags.host.is_some() || flags.secret_file.is_some() {
         Profile {
             name: "cli".to_owned(),
-            host: flags.host.clone().context("--host is required with --secret-file")?,
+            host: flags
+                .host
+                .clone()
+                .context("--host is required with --secret-file")?,
             port: profile::DEFAULT_PORT,
             server_name: String::new(),
             marker: profile::DEFAULT_MARKER.to_owned(),
@@ -146,10 +149,7 @@ fn resolve(args: &BladeArgs) -> Result<Resolved> {
     let server_ip = match profile.host.parse::<Ipv4Addr>() {
         Ok(ip) => ip,
         Err(_) => {
-            let addresses = (
-                profile.host.as_str(),
-                profile.port,
-            )
+            let addresses = (profile.host.as_str(), profile.port)
                 .to_socket_addrs()
                 .with_context(|| format!("resolving {}", profile.host))?
                 .find_map(|addr| match addr {
@@ -166,7 +166,9 @@ fn resolve(args: &BladeArgs) -> Result<Resolved> {
         None => exe_dir()
             .map(|dir| dir.join("wintun.dll"))
             .filter(|path| path.exists())
-            .with_context(|| "wintun.dll not found: pass --wintun-dll or place it next to sslim.exe")?
+            .with_context(
+                || "wintun.dll not found: pass --wintun-dll or place it next to sslim.exe",
+            )?
             .clone(),
     };
     let route_script = match &flags.route_script {
@@ -174,9 +176,9 @@ fn resolve(args: &BladeArgs) -> Result<Resolved> {
         None => exe_dir()
             .map(|dir| dir.join("blade-routes.ps1"))
             .filter(|path| path.exists())
-            .with_context(|| {
-                "blade-routes.ps1 not found: pass --route-script or place it next to sslim.exe"
-            })?
+            .with_context(
+                || "blade-routes.ps1 not found: pass --route-script or place it next to sslim.exe",
+            )?
             .clone(),
     };
 
@@ -188,6 +190,16 @@ fn resolve(args: &BladeArgs) -> Result<Resolved> {
         wintun_dll: wintun_dll.canonicalize()?,
         route_script: route_script.canonicalize()?,
     })
+}
+
+fn save_imported_profile(mut profile: Profile) -> Result<PathBuf> {
+    profile.validate()?;
+    if let Some(ca) = profile.ca_base64.take() {
+        let ca_path = profile::profiles_dir()?.join(format!("{}.ca.pem", profile.name));
+        std::fs::write(&ca_path, ca)?;
+        profile.ca_file = Some(ca_path);
+    }
+    profile::save(&profile)
 }
 
 #[derive(Default)]
@@ -269,7 +281,19 @@ fn public_prefixes(server: Ipv4Addr) -> String {
 }
 
 async fn configure(script: &Path, index: u32, server: Ipv4Addr) -> Result<()> {
-    run_route_script(script, ["-InterfaceIndex", &index.to_string(), "-ServerIP", &server.to_string(), "-Prefixes", &public_prefixes(server), "-BlockIPv6"]).await
+    run_route_script(
+        script,
+        [
+            "-InterfaceIndex",
+            &index.to_string(),
+            "-ServerIP",
+            &server.to_string(),
+            "-Prefixes",
+            &public_prefixes(server),
+            "-BlockIPv6",
+        ],
+    )
+    .await
 }
 
 async fn revert_routes(script: &Path) {
@@ -285,10 +309,7 @@ async fn run_route_script<const N: usize>(script: &Path, args: [&str; N]) -> Res
         .args(args)
         .status()
         .await?;
-    ensure!(
-        status.success(),
-        "Blade route setup failed ({status})"
-    );
+    ensure!(status.success(), "Blade route setup failed ({status})");
     Ok(())
 }
 
@@ -419,11 +440,9 @@ async fn connect_once(resolved: &Resolved) -> Result<()> {
     let downlink = async {
         let mut frames = FrameReader::new(input);
         loop {
-            let frame = timeout(READ_IDLE, frames.next())
-                .await
-                .map_err(|_| {
-                    std::io::Error::new(io::ErrorKind::TimedOut, "no data from the server")
-                })??;
+            let frame = timeout(READ_IDLE, frames.next()).await.map_err(|_| {
+                std::io::Error::new(io::ErrorKind::TimedOut, "no data from the server")
+            })??;
             match frame {
                 (PACKET, packet) => send_wintun(&session, packet, &counters).await?,
                 (PING, _) => pong.send(()).await?,
@@ -467,26 +486,20 @@ pub async fn run(args: BladeArgs) -> Result<()> {
             if let Some(name) = name {
                 profile.name = name;
             }
-            profile.validate()?;
-            // A CA delivered inside the link is unpacked next to the profile.
-            if let Some(ca) = profile.ca_base64.clone() {
-                let ca_path = profile::profiles_dir()?.join(format!("{}.ca.pem", profile.name));
-                std::fs::write(&ca_path, ca)?;
-                profile.ca_file = Some(ca_path);
-                profile.ca_base64 = None;
-                profile::save(&profile)?;
-            }
-            let path = profile::save(&profile)?;
+            let name = profile.name.clone();
+            let path = save_imported_profile(profile)?;
             println!(
                 "{OK_MARK} profile {:?} saved to {}",
-                profile.name,
+                name,
                 path.display()
             );
         }
         Some(BladeCommand::List) => {
             let profiles = profile::list()?;
             if profiles.is_empty() {
-                println!("{DIM}no profiles yet; import one with `sslim blade import \"sslim://...\"`{RESET}");
+                println!(
+                    "{DIM}no profiles yet; import one with `sslim blade import \"sslim://...\"`{RESET}"
+                );
                 return Ok(());
             }
             let width = profiles
@@ -495,7 +508,13 @@ pub async fn run(args: BladeArgs) -> Result<()> {
                 .max()
                 .unwrap_or(4)
                 .max(4);
-            println!("{DIM}{:<width$}  {:<26} {:<5} server name{RESET}", "name", "host", "port", width = width);
+            println!(
+                "{DIM}{:<width$}  {:<26} {:<5} server name{RESET}",
+                "name",
+                "host",
+                "port",
+                width = width
+            );
             for profile in profiles {
                 println!(
                     "{:<width$}  {:<26} {:<5} {}",
@@ -510,13 +529,18 @@ pub async fn run(args: BladeArgs) -> Result<()> {
         Some(BladeCommand::Show { name, qr }) => {
             let profile = match name {
                 Some(name) => profile::load(&name)?,
-                None => profile::default_profile()?
-                    .context("no profiles yet; import one first")?,
+                None => profile::default_profile()?.context("no profiles yet; import one first")?,
             };
             println!("name        {}", profile.name);
             println!("host        {}:{}", profile.host, profile.port);
             println!("server name {}", profile.server_name);
-            println!("CA          {}", profile.ca_file.as_deref().map_or("system".to_owned(), |path| path.display().to_string()));
+            println!(
+                "CA          {}",
+                profile
+                    .ca_file
+                    .as_deref()
+                    .map_or("system".to_owned(), |path| path.display().to_string())
+            );
             if qr {
                 print!("{}", crate::render_qr(&profile.to_uri()?)?);
             } else {
@@ -554,6 +578,120 @@ pub async fn run(args: BladeArgs) -> Result<()> {
         }
     }
     Ok(())
+}
+
+pub async fn console() -> Result<()> {
+    use std::io::{self, Write};
+
+    println!("Blade · SSLim");
+    println!("Введите /help или !help. Вставьте sslim:// ссылку, чтобы добавить сервер.");
+    loop {
+        print!("blade> ");
+        io::stdout().flush()?;
+        let mut line = String::new();
+        if io::stdin().read_line(&mut line)? == 0 {
+            return Ok(());
+        }
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if matches!(line, "/help" | "!help" | "help" | "/?") {
+            println!("/help             показать команды");
+            println!("list              показать сохранённые серверы");
+            println!("add <sslim://…>   добавить сервер по ссылке");
+            println!("connect [имя]     подключиться или вставить ссылку");
+            println!("exit              закрыть Blade");
+            continue;
+        }
+        if matches!(line, "exit" | "quit" | "/exit") {
+            return Ok(());
+        }
+        if matches!(line, "list" | "/list") {
+            let profiles = profile::list()?;
+            if profiles.is_empty() {
+                println!("Серверов пока нет. Вставьте sslim:// ссылку или выполните add <ссылка>.");
+            } else {
+                for profile in profiles {
+                    println!("{}  {}:{}", profile.name, profile.host, profile.port);
+                }
+            }
+            continue;
+        }
+
+        let source = if let Some(source) = line.strip_prefix("add ") {
+            Some((source.trim(), false))
+        } else if line.starts_with("sslim://") {
+            Some((line, true))
+        } else {
+            None
+        };
+        let profile_name = if let Some((source, connect_now)) = source {
+            match Profile::from_uri(source).and_then(|profile| {
+                let name = profile.name.clone();
+                save_imported_profile(profile)?;
+                Ok(name)
+            }) {
+                Ok(name) => {
+                    println!("Сервер «{name}» сохранён.");
+                    if !connect_now {
+                        continue;
+                    }
+                    name
+                }
+                Err(error) => {
+                    eprintln!("Не удалось прочитать ссылку: {error:#}");
+                    continue;
+                }
+            }
+        } else if line == "connect" || line.starts_with("connect ") {
+            let rest = line.strip_prefix("connect").unwrap_or_default();
+            let name = rest.trim();
+            if !name.is_empty() {
+                name.to_owned()
+            } else {
+                match profile::default_profile()? {
+                    Some(profile) => profile.name,
+                    None => {
+                        print!("Вставьте ссылку сервера: ");
+                        io::stdout().flush()?;
+                        let mut uri = String::new();
+                        io::stdin().read_line(&mut uri)?;
+                        match Profile::from_uri(uri.trim()) {
+                            Ok(profile) => {
+                                let name = profile.name.clone();
+                                save_imported_profile(profile)?;
+                                name
+                            }
+                            Err(error) => {
+                                eprintln!("Не удалось прочитать ссылку: {error:#}");
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            println!("Команда не распознана. Введите /help.");
+            continue;
+        };
+
+        run(BladeArgs {
+            command: None,
+            connect: ConnectArgs {
+                profile: Some(profile_name),
+                host: None,
+                port: None,
+                server_name: None,
+                ca: None,
+                secret_file: None,
+                wintun_dll: None,
+                route_script: None,
+                stats: Some(true),
+            },
+        })
+        .await?;
+    }
 }
 
 #[cfg(test)]

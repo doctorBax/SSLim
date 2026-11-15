@@ -72,11 +72,17 @@ public final class SettingsActivity extends Activity {
         back.setContentDescription("Назад");
         back.setOnClickListener(view -> finish());
         header.addView(back, new LinearLayout.LayoutParams(dp(40), dp(40)));
-        TextView title = label("Настройки", 20, WHITE, BOLD);
+        TextView title = label("Серверы", 20, WHITE, BOLD);
         LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(0, -2, 1f);
         titleParams.setMarginStart(dp(12));
         header.addView(title, titleParams);
         add(content, header, 0);
+
+        TextView intro = label(
+            "Добавьте сервер по ссылке от администратора или заполните данные вручную.",
+            13, MUTED, null);
+        intro.setLineSpacing(dp(3), 1);
+        add(content, intro, 14);
 
         // Active profile card.
         LinearLayout endpoint = new LinearLayout(this);
@@ -86,7 +92,7 @@ public final class SettingsActivity extends Activity {
         endpoint.setClickable(true);
         endpoint.setOnClickListener(view -> showProfilesDialog());
         LinearLayout server = column();
-        server.addView(label("АКТИВНЫЙ ПРОФИЛЬ", 10, MUTED, MEDIUM));
+        server.addView(label("ТЕКУЩИЙ СЕРВЕР", 10, MUTED, MEDIUM));
         activeName = label("—", 16, WHITE, BOLD);
         add(server, activeName, 3);
         activeEndpoint = label("Нажмите, чтобы выбрать сервер", 12, MUTED, null);
@@ -96,21 +102,27 @@ public final class SettingsActivity extends Activity {
         manage.setPadding(dp(10), dp(6), dp(10), dp(6));
         manage.setBackground(surface(BACKGROUND, 12, BORDER));
         endpoint.addView(manage);
-        add(content, endpoint, 20);
+        add(content, endpoint, 12);
 
-        add(content, caption("ИМПОРТ И СОЗДАНИЕ"), 22);
+        add(content, caption("ДОБАВИТЬ СЕРВЕР"), 22);
         LinearLayout actions = new LinearLayout(this);
-        Button paste = pill("Вставить sslim://");
+        Button paste = pill("Вставить ссылку");
         paste.setOnClickListener(view -> importFromClipboard());
         actions.addView(paste, new LinearLayout.LayoutParams(0, -2, 1f));
         LinearLayout.LayoutParams gap = new LinearLayout.LayoutParams(dp(10), 0);
         actions.addView(new View(this), gap);
-        Button create = pill("Создать профиль");
+        Button create = pill("Добавить вручную");
         create.setOnClickListener(view -> openEditor(null));
         actions.addView(create, new LinearLayout.LayoutParams(0, -2, 1f));
         add(content, actions, 8);
 
-        add(content, caption("ВСЕ ПРОФИЛИ"), 22);
+        TextView importHint = label(
+            "Если ссылка открыта в браузере или чате, нажмите на неё — Blade добавит сервер сам.",
+            12, MUTED, null);
+        importHint.setLineSpacing(dp(3), 1);
+        add(content, importHint, 8);
+
+        add(content, caption("СОХРАНЁННЫЕ СЕРВЕРЫ"), 22);
         profileList = column();
         add(content, profileList, 4);
 

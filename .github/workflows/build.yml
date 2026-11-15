@@ -1,0 +1,63 @@
+name: Build packages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --locked
+      - run: cargo build --release --locked
+      - run: tar -czf sslim-linux-x86_64.tar.gz -C target/release sslim
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sslim-linux-x86_64
+          path: sslim-linux-x86_64.tar.gz
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --locked
+      - run: cargo build --release --locked
+      - name: Package Blade
+        run: |
+          'exit' | target/release/sslim.exe
+          if ($LASTEXITCODE -ne 0) { throw 'Blade console failed to start' }
+          Invoke-WebRequest https://www.wintun.net/builds/wintun-0.14.1.zip -OutFile wintun.zip
+          if ((Get-FileHash wintun.zip).Hash -ne '07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51') { throw 'Wintun checksum mismatch' }
+          Expand-Archive wintun.zip wintun-pkg
+          New-Item -ItemType Directory dist | Out-Null
+          Copy-Item target/release/sslim.exe,scripts/blade-routes.ps1,scripts/install.ps1,wintun-pkg/wintun/bin/amd64/wintun.dll,wintun-pkg/wintun/LICENSE.txt dist/
+          Compress-Archive -Path dist/* -DestinationPath sslim-windows-x86_64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sslim-windows-x86_64
+          path: sslim-windows-x86_64.zip
+  android:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Build APK
+        run: |
+          $sdk = $env:ANDROID_HOME
+          $manager = Join-Path $sdk 'cmdline-tools/latest/bin/sdkmanager.bat'
+          & $manager --sdk_root="$sdk" 'platforms;android-35' 'build-tools;35.0.0'
+          if ($LASTEXITCODE -ne 0) { throw 'Android SDK components missing' }
+          ./android/build.ps1 -Sdk $sdk -Jdk $env:JAVA_HOME
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Blade-Android
+          path: android/build/Blade.apk

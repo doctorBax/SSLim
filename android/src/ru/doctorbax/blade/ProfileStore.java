@@ -191,7 +191,7 @@ public final class ProfileStore {
             String key = pair.substring(0, eq);
             String value = pair.substring(eq + 1);
             try {
-                value = java.net.URLDecoder.decode(value, StandardCharsets.UTF_8.name());
+                value = java.net.URLDecoder.decode(value.replace("+", "%2B"), StandardCharsets.UTF_8.name());
             } catch (Exception ignored) {
                 // Keep the raw value when it is not percent-encoded.
             }

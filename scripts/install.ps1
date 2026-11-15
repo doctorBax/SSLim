@@ -1,28 +1,58 @@
-# SSLim Blade installer: copies the release files and adds the directory to the user PATH.
-# Usage: powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1
+# Install Blade from an unpacked Windows release or fetch the latest release.
 param(
-    [string]$Destination = "$env:LOCALAPPDATA\sslim"
+    [string]$Destination = "$env:LOCALAPPDATA\sslim",
+    [switch]$NoLaunch
 )
 
 $ErrorActionPreference = "Stop"
-$root = $PSScriptRoot
+$root = if ($PSScriptRoot) { $PSScriptRoot } else { Get-Location }
+$temporary = $null
+$required = @("sslim.exe", "blade-routes.ps1", "wintun.dll")
 
-foreach ($name in @("sslim.exe", "blade-routes.ps1", "wintun.dll")) {
-    $source = Join-Path $root $name
-    if (-not (Test-Path $source)) {
-        Write-Error "missing $source - run this script from the unpacked release"
+try {
+    $missing = @($required | Where-Object { -not (Test-Path (Join-Path $root $_)) })
+    if ($missing.Count -gt 0) {
+        Write-Host "Downloading the latest Blade release..."
+        $release = Invoke-RestMethod -Headers @{ "User-Agent" = "SSLim-Blade-Installer" } `
+            -Uri "https://api.github.com/repos/doctorBax/sslim/releases/latest"
+        $asset = $release.assets | Where-Object { $_.name -eq "sslim-windows-x86_64.zip" } | Select-Object -First 1
+        if (-not $asset) {
+            throw "The latest GitHub release does not contain the Windows package yet."
+        }
+        $temporary = Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid().ToString())
+        New-Item -ItemType Directory -Path $temporary | Out-Null
+        $archive = Join-Path $temporary "sslim-windows-x86_64.zip"
+        Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $archive
+        $root = Join-Path $temporary "package"
+        Expand-Archive -LiteralPath $archive -DestinationPath $root
+    }
+
+    foreach ($name in $required) {
+        $source = Join-Path $root $name
+        if (-not (Test-Path $source)) {
+            throw "The package is incomplete. Missing $source"
+        }
+    }
+
+    New-Item -ItemType Directory -Force -Path $Destination | Out-Null
+    foreach ($name in $required) {
+        Copy-Item (Join-Path $root $name) $Destination -Force
+    }
+
+    $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    $pathEntries = @($userPath -split ";" | Where-Object { $_ })
+    if ($pathEntries -notcontains $Destination) {
+        [Environment]::SetEnvironmentVariable("Path", (@($pathEntries + $Destination) -join ";"), "User")
+        Write-Host "Added Blade to your user PATH."
+    }
+
+    Write-Host "Blade is installed. Confirm the Windows administrator prompt to connect."
+    if (-not $NoLaunch) {
+        Start-Process -FilePath (Join-Path $Destination "sslim.exe") `
+            -WorkingDirectory $Destination -Verb RunAs
+    }
+} finally {
+    if ($temporary -and (Test-Path -LiteralPath $temporary)) {
+        Remove-Item -LiteralPath $temporary -Recurse -Force
     }
 }
-
-New-Item -ItemType Directory -Force -Path $Destination | Out-Null
-foreach ($name in @("sslim.exe", "blade-routes.ps1", "wintun.dll")) {
-    Copy-Item (Join-Path $root $name) $Destination -Force
-}
-
-$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-if ($userPath -notlike "*$Destination*") {
-    [Environment]::SetEnvironmentVariable("Path", "$userPath;$Destination", "User")
-    Write-Host "Added $Destination to the user PATH; open a new terminal for it to apply."
-}
-
-Write-Host "Installed. Try: sslim blade import `"sslim://...`""; sslim blade --stats"

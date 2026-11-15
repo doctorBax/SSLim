@@ -68,7 +68,7 @@ public final class ProfileEditorActivity extends Activity {
 
         LinearLayout header = new LinearLayout(this);
         header.setGravity(Gravity.CENTER_VERTICAL);
-        TextView title = label("Профиль сервера", 20, WHITE, BOLD);
+        TextView title = label("Данные сервера", 20, WHITE, BOLD);
         header.addView(title, new LinearLayout.LayoutParams(0, -2, 1f));
         TextView cancel = label("Отмена", 14, MUTED, MEDIUM);
         cancel.setPadding(dp(8), dp(8), dp(8), dp(8));
@@ -84,37 +84,38 @@ public final class ProfileEditorActivity extends Activity {
             }
         }
 
-        link = field("Вставьте ссылку sslim:// целиком — поля заполнятся сами", false);
-        add(content, caption("БЫСТРЫЙ ИМПОРТ"), 18);
+        link = field("Вставьте ссылку, которую прислал администратор", false);
+        add(content, caption("ДОБАВИТЬ ПО ССЫЛКЕ"), 18);
         add(content, link, 6);
-        Button fill = pill("Заполнить из ссылки");
+        Button fill = pill("Заполнить данные из ссылки");
         fill.setOnClickListener(view -> fillFromLink());
         add(content, fill, 8);
 
-        add(content, caption("СЕРВЕР"), 20);
-        name = field("Название (например, «Личный VPN»)", true);
+        add(content, caption("ОСНОВНЫЕ ДАННЫЕ"), 20);
+        name = field("Название, например «Личный сервер»", true);
         add(content, name, 6);
-        host = field("Адрес: домен или IP", false);
+        host = field("Адрес сервера: домен или IP", false);
         add(content, host, 8);
-        port = field("Порт (обычно 9443)", false);
+        port = field("Порт, обычно 9443", false);
         port.setInputType(InputType.TYPE_CLASS_NUMBER);
         add(content, port, 8);
-        sni = field("TLS server name (обычно совпадает с доменом)", false);
+        sni = field("Имя сервера для TLS, обычно совпадает с адресом", false);
         add(content, sni, 8);
 
-        add(content, caption("СЕКРЕТ (base64, минимум 32 байта)"), 20);
-        secret = field("Секрет из sslim://-ссылки или от администратора сервера", true);
+        add(content, caption("КЛЮЧ ДОСТУПА"), 20);
+        secret = field("Ключ из ссылки или сообщения администратора (Base64)", true);
         secret.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD);
         add(content, secret, 6);
 
-        add(content, caption("СЕРТИФИКАТ СЕРВЕРА"), 20);
+        add(content, caption("ДОПОЛНИТЕЛЬНАЯ ПРОВЕРКА СЕРТИФИКАТА"), 20);
         customCa = new CheckBox(this);
-        customCa.setText("Свой CA (PEM) вместо системных сертификатов");
+        customCa.setText("Мне выдали отдельный сертификат сервера");
         customCa.setTextColor(WHITE);
         customCa.setTextSize(13);
+        customCa.setSingleLine(false);
         customCa.setOnCheckedChangeListener((button, checked) -> caPem.setVisibility(checked ? View.VISIBLE : View.GONE));
         add(content, customCa, 4);
-        caPem = field("PEM-сертификат сервера (-----BEGIN CERTIFICATE-----)", true);
+        caPem = field("Вставьте сертификат целиком", true);
         caPem.setVisibility(View.GONE);
         caPem.setMinLines(3);
         add(content, caPem, 6);

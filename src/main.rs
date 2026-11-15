@@ -1,4 +1,6 @@
 mod auth;
+#[cfg(target_os = "linux")]
+mod client_admin;
 mod profile;
 mod protocol;
 #[cfg(target_os = "linux")]
@@ -10,9 +12,9 @@ mod tun;
 mod windows_client;
 
 #[cfg(target_os = "linux")]
-use std::ffi::CString;
-#[cfg(target_os = "linux")]
 use std::collections::HashMap;
+#[cfg(target_os = "linux")]
+use std::ffi::CString;
 use std::fs::File;
 use std::io::BufReader;
 #[cfg(target_os = "linux")]
@@ -23,9 +25,9 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
 
-use anyhow::{Result, ensure};
 #[cfg(target_os = "linux")]
 use anyhow::Context;
+use anyhow::{Result, ensure};
 use clap::{Args, Parser, Subcommand};
 use tokio::io::AsyncWriteExt;
 #[cfg(target_os = "linux")]
@@ -40,9 +42,9 @@ use tokio_rustls::TlsConnector;
 use tokio_rustls::rustls::ServerConfig;
 use tokio_rustls::rustls::{ClientConfig, RootCertStore, version};
 
-use crate::auth::{generate_secret, read_key, write_secret_file};
 #[cfg(target_os = "linux")]
 use crate::auth::KeyRing;
+use crate::auth::{generate_secret, read_key, write_secret_file};
 use crate::profile::Profile;
 use crate::protocol::{CLOSE, FrameReader, PACKET, append_packet};
 use crate::session::connect;
@@ -55,7 +57,7 @@ use crate::tun::Tun;
 #[command(version, about = "SSLim TLS packet transport")]
 struct Cli {
     #[command(subcommand)]
-    command: Command,
+    command: Option<Command>,
 }
 
 #[derive(Args)]
@@ -104,6 +106,9 @@ enum Command {
         #[arg(long)]
         congestion_control: Option<String>,
     },
+    #[cfg(target_os = "linux")]
+    /// Manage client keys on a server
+    Clients(client_admin::ClientAdminArgs),
     #[cfg(target_os = "linux")]
     Client {
         #[command(flatten)]
@@ -241,11 +246,26 @@ fn set_congestion_control(listener: &TcpListener, name: &str) -> Result<()> {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
-    match Cli::parse().command {
+    let command = Cli::parse().command;
+    if command.is_none() {
+        #[cfg(windows)]
+        return windows_client::console().await;
+        #[cfg(not(windows))]
+        anyhow::bail!("choose a command; run `sslim --help` for usage");
+    }
+    match command.expect("checked above") {
         #[cfg(windows)]
         Command::Blade(args) => windows_client::run(args).await,
         #[cfg(target_os = "linux")]
         Command::Quic(args) => quic::run(args).await,
+        #[cfg(target_os = "linux")]
+        Command::Clients(args) => {
+            if let Some(uri) = client_admin::run(args)? {
+                println!("Client link\n{uri}\n");
+                print!("{}", render_qr(&uri)?);
+            }
+            Ok(())
+        }
         #[cfg(target_os = "linux")]
         Command::Server {
             host,
@@ -260,18 +280,23 @@ async fn main() -> Result<()> {
         } => {
             let ring = match &secrets_file {
                 Some(list) => KeyRing::from_file(list)?,
-                None => KeyRing::single(
-                    secret_file.as_deref().expect("clap guarantees one source"),
-                )?,
+                None => {
+                    KeyRing::single(secret_file.as_deref().expect("clap guarantees one source"))?
+                }
             };
             println!(
                 "{} accepted secret(s): {}",
                 ring.len(),
-                if secrets_file.is_some() { "per-client" } else { "single" }
+                if secrets_file.is_some() {
+                    "per-client"
+                } else {
+                    "single"
+                }
             );
             let server = Arc::new(Server {
                 acceptor: server_tls(&cert, &key)?,
                 ring,
+                secrets_file,
                 replay: Mutex::new(HashMap::new()),
                 device,
                 tun_name,

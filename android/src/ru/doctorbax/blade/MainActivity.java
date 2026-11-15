@@ -46,6 +46,9 @@ public final class MainActivity extends Activity {
     private TextView chip;
     private TextView headline;
     private TextView details;
+    private TextView activeProfileName;
+    private TextView activeProfileAddress;
+    private TextView activeProfileAction;
     private String shownStatus;
     private boolean shownRunning;
     private TextView throughputDown;
@@ -86,26 +89,19 @@ public final class MainActivity extends Activity {
 
         LinearLayout content = column();
         content.setPadding(dp(24), dp(24), dp(24), dp(22));
-        content.setGravity(Gravity.CENTER_VERTICAL);
-        scroll.addView(content);
+        scroll.addView(content, new ScrollView.LayoutParams(-1, -1));
 
         // Header: gear in the corner opens settings; profile work lives there.
         LinearLayout header = new LinearLayout(this);
         header.setGravity(Gravity.CENTER_VERTICAL);
+        TextView name = label("Blade", 20, WHITE, BOLD);
+        header.addView(name, new LinearLayout.LayoutParams(0, -2, 1f));
         ImageView gear = iconButton(R.drawable.ic_gear, 40, MINT, SURFACE, 12);
-        gear.setOnClickListener(view -> startActivityForResult(
-            new Intent(this, SettingsActivity.class), REQUEST_SETTINGS));
+        gear.setOnClickListener(view -> openSettings());
         gear.setContentDescription("Настройки");
         header.addView(gear, new LinearLayout.LayoutParams(dp(40), dp(40)));
-        TextView name = label("Blade", 20, WHITE, BOLD);
-        LinearLayout.LayoutParams brandText = new LinearLayout.LayoutParams(0, -2, 1f);
-        brandText.setMarginStart(dp(12));
-        header.addView(name, brandText);
-        TextView version = label("клиент SSLim", 11, MUTED, MEDIUM);
-        version.setPadding(dp(10), dp(6), dp(10), dp(6));
-        version.setBackground(surface(BACKGROUND, 12, BORDER));
-        header.addView(version);
         add(content, header, 0);
+        addFlexibleSpace(content);
 
         // Hero panel is the connect button itself.
         FrameLayout heroPanel = new FrameLayout(this);
@@ -119,11 +115,10 @@ public final class MainActivity extends Activity {
             ColorStateList.valueOf(0x40b7f4cd), panel, pressed));
         heroPanel.setClickable(true);
         heroPanel.setOnClickListener(view -> toggleConnection());
+        heroPanel.setContentDescription("Подключить или отключить VPN");
         hero = new HeroView(this);
         heroPanel.addView(hero, new FrameLayout.LayoutParams(-1, -1));
         ImageView centerArrow = arrow(82, 40, BACKGROUND, MINT, 24);
-        centerArrow.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
-        centerArrow.setContentDescription("Подключить или отключить VPN");
         heroPanel.addView(centerArrow, new FrameLayout.LayoutParams(dp(82), dp(82), Gravity.CENTER));
         int heroHeight = getResources().getConfiguration().screenHeightDp < 680 ? 160 : 214;
         LinearLayout.LayoutParams heroSize = new LinearLayout.LayoutParams(-1, dp(heroHeight));
@@ -146,6 +141,7 @@ public final class MainActivity extends Activity {
         details.setLineSpacing(dp(3), 1);
         add(summary, details, 6);
         add(content, summary, 20);
+        addFlexibleSpace(content);
 
         LinearLayout stats = new LinearLayout(this);
         stats.setBackground(surface(SURFACE, 20, BORDER));
@@ -153,10 +149,31 @@ public final class MainActivity extends Activity {
         throughputDown = addStat(stats, "Загрузка");
         throughputUp = addStat(stats, "Отдача");
         latency = addStat(stats, "Пинг до VPS");
-        add(content, stats, 16);
+        add(content, stats, 14);
+
+        LinearLayout profileCard = new LinearLayout(this);
+        profileCard.setGravity(Gravity.CENTER_VERTICAL);
+        profileCard.setPadding(dp(16), dp(12), dp(16), dp(12));
+        profileCard.setBackground(surface(SURFACE, 18, BORDER));
+        profileCard.setClickable(true);
+        profileCard.setForeground(new RippleDrawable(
+            ColorStateList.valueOf(0x30ffffff), null, surface(SURFACE, 18, 0)));
+        profileCard.setContentDescription("Профиль сервера. Открыть настройки");
+        profileCard.setOnClickListener(view -> openSettings());
+        LinearLayout profileText = column();
+        profileText.addView(label("СЕРВЕР", 10, MUTED, MEDIUM));
+        activeProfileName = label("", 15, WHITE, BOLD);
+        add(profileText, activeProfileName, 3);
+        activeProfileAddress = label("", 12, MUTED, null);
+        add(profileText, activeProfileAddress, 2);
+        profileCard.addView(profileText, new LinearLayout.LayoutParams(0, -2, 1f));
+        activeProfileAction = label("Настроить  ›", 12, MINT, MEDIUM);
+        profileCard.addView(activeProfileAction);
+        add(content, profileCard, 12);
 
         setContentView(scroll);
         handleIncomingIntent(getIntent());
+        renderProfile();
         renderStatus();
     }
 
@@ -164,6 +181,7 @@ public final class MainActivity extends Activity {
         super.onNewIntent(intent);
         setIntent(intent);
         handleIncomingIntent(intent);
+        renderProfile();
     }
 
     /** sslim:// links (from a browser or chat) import the profile silently. */
@@ -253,6 +271,23 @@ public final class MainActivity extends Activity {
         hero.setState(connected, starting || stopping || running);
     }
 
+    private void renderProfile() {
+        ProfileStore.Profile profile = ProfileStore.active(this);
+        if (profile == null) {
+            activeProfileName.setText("Сервер не добавлен");
+            activeProfileAddress.setText("Добавьте профиль для подключения");
+            activeProfileAction.setText("Настроить  ›");
+            return;
+        }
+        activeProfileName.setText(profile.name);
+        activeProfileAddress.setText(profile.host + ":" + profile.port);
+        activeProfileAction.setText("Сменить  ›");
+    }
+
+    private void openSettings() {
+        startActivityForResult(new Intent(this, SettingsActivity.class), REQUEST_SETTINGS);
+    }
+
     private void toggleConnection() {
         if (BladeVpn.running) {
             startService(new Intent(this, BladeVpn.class).setAction(BladeVpn.DISCONNECT));
@@ -291,6 +326,10 @@ public final class MainActivity extends Activity {
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
         params.topMargin = dp(margin);
         parent.addView(view, params);
+    }
+
+    private void addFlexibleSpace(LinearLayout parent) {
+        parent.addView(new View(this), new LinearLayout.LayoutParams(-1, 0, 1f));
     }
 
     private ImageView iconButton(int drawable, int box, int tint, int background, int radius) {
@@ -349,6 +388,7 @@ public final class MainActivity extends Activity {
         private final float[] angularSpeed = new float[PARTICLES];
         private boolean connected;
         private boolean animating;
+        private boolean animationVisible = true;
         private long stateSince;
 
         HeroView(MainActivity activity) {
@@ -370,7 +410,12 @@ public final class MainActivity extends Activity {
                 animating = nowConnected || nowAnimating;
                 stateSince = SystemClock.elapsedRealtime();
             }
-            if (animating) postInvalidateOnAnimation();
+            if (animating && animationVisible) postInvalidateOnAnimation();
+        }
+
+        void setAnimationVisible(boolean visible) {
+            animationVisible = visible;
+            if (visible && animating) postInvalidateOnAnimation();
         }
 
         @Override protected void onDraw(Canvas canvas) {
@@ -380,13 +425,14 @@ public final class MainActivity extends Activity {
             long t = SystemClock.elapsedRealtime();
             float arrowRadius = dp(41);
 
-            // Soft glow behind the arrow while connected, gently pulsing.
-            if (connected) {
-                float pulse = 0.85f + 0.15f * (float) Math.sin((t - stateSince) / 300.0);
-                glow.setShader(new RadialGradient(cx, cy, dp(58) * pulse,
-                    new int[]{0x55b7f4cd, 0x22b7f4cd, 0x00b7f4cd},
+            // The glow signals both connection setup and an active tunnel.
+            if (animating) {
+                float pulse = 0.78f + 0.22f * (float) Math.sin((t - stateSince) / 290.0);
+                int glowColor = connected ? 0x55b7f4cd : 0x4476d9e8;
+                glow.setShader(new RadialGradient(cx, cy, dp(68) * pulse,
+                    new int[]{glowColor, 0x2276d9e8, 0x0076d9e8},
                     new float[]{0f, 0.55f, 1f}, android.graphics.Shader.TileMode.CLAMP));
-                canvas.drawCircle(cx, cy, dp(58) * pulse, glow);
+                canvas.drawCircle(cx, cy, dp(68) * pulse, glow);
             }
 
             // Static guide rings (idle and active).
@@ -397,64 +443,76 @@ public final class MainActivity extends Activity {
                 canvas.drawCircle(cx, cy, dp(radius), paint);
             }
 
-            // Material-style expanding waves while connected.
-            if (connected) {
+            // Expanding rings show progress before the server confirms the connection.
+            if (animating) {
                 float maxRadius = Math.min(getWidth(), getHeight()) / 2f - dp(6);
                 for (int i = 0; i < WAVES; i++) {
                     float phase = ((t - stateSince) % WAVE_MS) / (float) WAVE_MS;
                     phase = (phase + i / (float) WAVES) % 1f;
                     float radius = arrowRadius + phase * (maxRadius - arrowRadius);
                     paint.setStrokeWidth(dp(2) * (1f - phase * 0.7f));
-                    paint.setColor(0x667fe4b0);
-                    paint.setAlpha((int) (0x70 * (1f - phase)));
+                    paint.setColor(connected ? 0x667fe4b0 : 0x6676d9e8);
+                    paint.setAlpha((int) ((connected ? 0x70 : 0x58) * (1f - phase)));
                     canvas.drawCircle(cx, cy, radius, paint);
                 }
                 paint.setStrokeWidth(dp(1));
             }
 
-            // A rotating progress arc while connecting.
+            // Counter-rotating arcs make connection setup visible at a glance.
             if (animating && !connected) {
-                float rotation = (t - stateSince) % 1100 / 1100f * 360f;
+                float rotation = (t - stateSince) % 1250 / 1250f * 360f;
                 paint.setStyle(Paint.Style.STROKE);
                 paint.setStrokeWidth(dp(2.5f));
-                paint.setColor(0x887fe4b0);
-                canvas.drawArc(cx - dp(50), cy - dp(50), cx + dp(50), cy + dp(50),
-                    rotation, 95f, false, paint);
+                paint.setColor(0x9976d9e8);
+                canvas.drawArc(cx - dp(48), cy - dp(48), cx + dp(48), cy + dp(48),
+                    rotation, 115f, false, paint);
+                paint.setStrokeWidth(dp(1.5f));
+                paint.setColor(0x667fe4b0);
+                canvas.drawArc(cx - dp(59), cy - dp(59), cx + dp(59), cy + dp(59),
+                    -rotation * 0.72f, 72f, false, paint);
             }
 
-            // Slow drifting particles while connected; they fade in over 600 ms.
-            if (connected) {
-                float fade = Math.min(1f, (t - stateSince) / 600f);
+            // Orbiting particles mark connection setup and the active tunnel.
+            if (animating) {
+                float fade = Math.min(1f, (t - stateSince) / 450f);
+                float maxRadius = Math.min(getWidth(), getHeight()) / 2f - dp(8);
                 for (int i = 0; i < PARTICLES; i++) {
                     float a = (float) Math.toRadians(angle[i] + (t / 1000f) * angularSpeed[i]);
-                    float r = dp(orbitRadius[i] + 6f * (float) Math.sin((t / 900f) + i));
+                    float r = Math.min(dp(orbitRadius[i]), maxRadius)
+                        + dp(5f) * (float) Math.sin((t / 900f) + i);
                     float x = cx + (float) Math.cos(a) * r;
                     float y = cy + (float) Math.sin(a) * r;
                     paint.setStyle(Paint.Style.FILL);
-                    paint.setColor(i % 3 == 0 ? 0xffeafcf2 : 0xffb7f4cd);
-                    paint.setAlpha((int) (fade * (i % 3 == 0 ? 120 : 85)));
+                    paint.setColor(!connected ? 0xffa9ebf2 :
+                        i % 3 == 0 ? 0xffeafcf2 : 0xffb7f4cd);
+                    paint.setAlpha((int) (fade * (i % 3 == 0 ? 150 : 105)));
                     canvas.drawCircle(x, y, dp(dotRadius[i]), paint);
                 }
             }
 
-            if (animating) postInvalidateOnAnimation();
+            if (animating && animationVisible) postInvalidateOnAnimation();
         }
     }
 
     @Override protected void onStart() {
         super.onStart();
+        if (hero != null) hero.setAnimationVisible(true);
         refresh.run();
     }
 
     @Override protected void onStop() {
         handler.removeCallbacks(refresh);
+        if (hero != null) hero.setAnimationVisible(false);
         super.onStop();
     }
 
     @Override protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
         if (request == REQUEST_VPN && result == RESULT_OK) connect();
-        if (request == REQUEST_SETTINGS) renderStatus();
+        if (request == REQUEST_SETTINGS) {
+            renderProfile();
+            renderStatus();
+        }
     }
 
     private void connect() {

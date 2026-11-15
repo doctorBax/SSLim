@@ -67,8 +67,10 @@ public final class BladeVpn extends VpnService {
 
     static volatile Traffic traffic = new Traffic();
     private final Handler handler = new Handler(Looper.getMainLooper());
+    private final Runnable forceClose = this::closeResources;
     private volatile boolean stopping;
     private Thread worker;
+    private Thread closeWorker;
     private DataOutputStream sessionOutput;
     private String phase;
     private Socket socket;
@@ -152,22 +154,52 @@ public final class BladeVpn extends VpnService {
     private void runTunnel() {
         long delay = 0;
         int attempt = 0;
-        while (!stopping) {
-            try {
-                runSession();
-                return; // server closed cleanly or stopping was requested
-            } catch (Exception error) {
-                if (stopping) return;
-                Log.w("Blade", "VPN failed during " + phase, error);
-                delay = nextDelay(attempt++);
-                status = "Переподключение через " + (delay / 1000) + " с…";
+        try {
+            while (!stopping) {
                 try {
-                    Thread.sleep(delay);
-                } catch (InterruptedException interrupt) {
-                    return;
+                    runSession();
+                    return; // server closed cleanly or stopping was requested
+                } catch (Exception error) {
+                    if (stopping) return;
+                    Log.w("Blade", "VPN failed during " + phase, error);
+                    delay = nextDelay(attempt++);
+                    status = "Переподключение через " + (delay / 1000) + " с…";
+                    try {
+                        Thread.sleep(delay);
+                    } catch (InterruptedException interrupt) {
+                        return;
+                    }
                 }
             }
+        } finally {
+            closeResources();
+            Thread closing = closeWorker;
+            if (closing != null && closing != Thread.currentThread()) {
+                boolean interrupted = Thread.interrupted();
+                try {
+                    closing.join(600);
+                } catch (InterruptedException error) {
+                    interrupted = true;
+                }
+                if (interrupted) Thread.currentThread().interrupt();
+            }
+            handler.post(this::finishTunnel);
         }
+    }
+
+    private void finishTunnel() {
+        handler.removeCallbacks(forceClose);
+        synchronized (this) {
+            running = false;
+            worker = null;
+            closeWorker = null;
+            if (stopping || "Подключение…".equals(status) || "VPN подключён".equals(status)) {
+                status = "Отключено";
+            }
+            stopping = false;
+        }
+        stopForeground(STOP_FOREGROUND_REMOVE);
+        stopSelf();
     }
 
     private long nextDelay(int attempt) {
@@ -421,31 +453,43 @@ public final class BladeVpn extends VpnService {
         }
         if (output == null) {
             closeResources();
-            if (worker == null) stopSelf();
-            else worker.interrupt();
+            if (worker == null) {
+                running = false;
+                status = "Отключено";
+                stopForeground(STOP_FOREGROUND_REMOVE);
+                stopSelf();
+            } else {
+                worker.interrupt();
+            }
             return;
         }
         // Bound cleanup even if the socket stalls while flushing the CLOSE frame.
-        handler.postDelayed(this::closeResources, 500);
-        new Thread(() -> {
+        handler.removeCallbacks(forceClose);
+        handler.postDelayed(forceClose, 500);
+        Thread closing = new Thread(() -> {
             try {
                 synchronized (output) {
                     output.write(CLOSE_FRAME);
                     output.flush();
                 }
             } catch (IOException ignored) {
-            } finally {
-                closeResources();
             }
-        }, "blade-vpn-close").start();
+        }, "blade-vpn-close");
+        synchronized (this) {
+            closeWorker = closing;
+        }
+        closing.start();
     }
 
     @Override public void onDestroy() {
         handler.removeCallbacksAndMessages(null);
         stopping = true;
+        handler.removeCallbacks(forceClose);
         closeResources();
         if (status.equals("VPN подключён") || status.equals("Подключение…") || status.equals("Отключение…")) status = "Отключено";
         running = false;
+        worker = null;
+        closeWorker = null;
         super.onDestroy();
     }
 }

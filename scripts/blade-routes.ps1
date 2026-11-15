@@ -25,11 +25,11 @@ if (-not $InterfaceIndex -or -not $ServerIP -or -not $Prefixes) {
 
 $existing = Get-NetIPAddress -InterfaceIndex $InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue
 if (-not $existing) {
-    New-NetIPAddress -InterfaceIndex $InterfaceIndex -IPAddress $ServerIP -PrefixLength 32 -ErrorAction Stop | Out-Null
+    New-NetIPAddress -InterfaceIndex $InterfaceIndex -IPAddress "10.253.0.2" -PrefixLength 32 -PolicyStore ActiveStore -ErrorAction Stop | Out-Null
 }
 
 foreach ($prefix in $Prefixes -split ',') {
-    New-NetRoute -DestinationPrefix $prefix -InterfaceIndex $InterfaceIndex -RouteMetric 1 -ErrorAction SilentlyContinue | Out-Null
+    New-NetRoute -DestinationPrefix $prefix -InterfaceIndex $InterfaceIndex -NextHop "0.0.0.0" -RouteMetric 1 -PolicyStore ActiveStore -ErrorAction Stop | Out-Null
 }
 
 if ($BlockIPv6) {

@@ -28,6 +28,20 @@ Linux TUN  ←→  Клиент  ═══════ TLS 1.3 ═════�
   --secret-file /path/to/session.bin --tun-name labtun0
 ```
 
+Для нескольких пользователей добавляйте клиентов командами `sslim clients add`, `list` и `remove`. Ссылка содержит ключ конкретного клиента. Если сервер использует собственный сертификат, передайте его через `--ca-file`, чтобы включить сертификат в ссылку.
+
+```bash
+./sslim clients add --label alice --host vpn.example.com \
+  --secrets-file /etc/sslim/clients.txt --ca-file /etc/sslim/server.crt
+./sslim server --host 0.0.0.0 --port 9443 --device tun \
+  --cert /etc/sslim/server.crt --key /etc/sslim/server.key \
+  --secrets-file /etc/sslim/clients.txt --tun-name labtun0
+./sslim clients list --secrets-file /etc/sslim/clients.txt
+./sslim clients remove alice --secrets-file /etc/sslim/clients.txt
+```
+
+Сервер перечитывает список ключей при каждом новом подключении. Добавление и отзыв ключа не перезапускают службу. Уже открытые сеансы завершаются при отключении клиента.
+
 На клиенте:
 
 ```bash
@@ -43,6 +57,16 @@ Linux TUN  ←→  Клиент  ═══════ TLS 1.3 ═════�
 ## Blade — клиент для Windows
 
 `sslim blade` подключается по профилю из `%APPDATA%\sslim\profiles`, поднимает Wintun-адаптер, направляет весь IPv4-трафик в туннель через 32 маршрута /1–/32 (адрес сервера остаётся на основном шлюзе) и блокирует исходящий IPv6 firewall-правилом, пока туннель активен. Выходной IP проверяется запросом к `https://1.1.1.1/cdn-cgi/trace` с отключёнными прокси. Соединение поддерживается ping-фреймами и переподключается автоматически с задержкой 1–30 с. Требуются права администратора и `wintun.dll` (ищется рядом с `sslim.exe`, либо `--wintun-dll`).
+
+После публикации Windows-пакета установите Blade одной командой в PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/doctorBax/sslim/main/scripts/install.ps1 | iex
+```
+
+Установщик скачает архив из последнего релиза, установит его в `%LOCALAPPDATA%\sslim`, добавит команду `sslim` в пользовательский `PATH` и откроет консоль Blade. При первом запуске вставьте `sslim://` ссылку или выполните `connect`, затем подтвердите системный запрос Wintun.
+
+В консоли работают `/help`, `!help`, `list`, `add <ссылка>`, `connect [имя]` и `exit`. Вставка ссылки напрямую сохраняет профиль и сразу начинает подключение.
 
 ```bash
 sslim blade import "sslim://vpn.example.com:9443?sni=vpn.example.com&k=BASE64&n=home"

@@ -1,6 +1,8 @@
 #[cfg(target_os = "linux")]
 use std::collections::HashMap;
 #[cfg(target_os = "linux")]
+use std::path::PathBuf;
+#[cfg(target_os = "linux")]
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -14,12 +16,12 @@ use tokio::net::TcpStream;
 #[cfg(target_os = "linux")]
 use tokio::sync::mpsc;
 use tokio::time::timeout;
-use tokio_rustls::rustls::pki_types::ServerName;
-#[cfg(target_os = "linux")]
-use tokio_rustls::rustls::ProtocolVersion;
 #[cfg(target_os = "linux")]
 use tokio_rustls::TlsAcceptor;
 use tokio_rustls::TlsConnector;
+#[cfg(target_os = "linux")]
+use tokio_rustls::rustls::ProtocolVersion;
+use tokio_rustls::rustls::pki_types::ServerName;
 
 use crate::auth::credentials;
 #[cfg(target_os = "linux")]
@@ -173,6 +175,7 @@ pub async fn connect(
 pub struct Server {
     pub acceptor: TlsAcceptor,
     pub ring: KeyRing,
+    pub secrets_file: Option<PathBuf>,
     pub replay: Mutex<HashMap<String, ReplayGuard>>,
     pub device: Device,
     pub tun_name: String,
@@ -190,7 +193,14 @@ impl Server {
             return answer(&mut stream, "400 Bad Request", b"Bad request", false).await;
         };
         let verified = if tls13 && request.is_upgrade() {
-            self.ring
+            let loaded_ring = self
+                .secrets_file
+                .as_deref()
+                .map(KeyRing::from_file)
+                .transpose()?;
+            loaded_ring
+                .as_ref()
+                .unwrap_or(&self.ring)
                 .verify(
                     request.get("x-session-time"),
                     request.get("x-session-nonce"),
