@@ -25,6 +25,7 @@ if (-not $InterfaceIndex -or -not $ServerIP -or -not $Prefixes) {
 
 $existing = Get-NetIPAddress -InterfaceIndex $InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue
 Set-NetIPInterface -InterfaceIndex $InterfaceIndex -AddressFamily IPv4 -NlMtuBytes 1280 -PolicyStore ActiveStore
+Set-NetIPInterface -InterfaceIndex $InterfaceIndex -AddressFamily IPv4 -AutomaticMetric Disabled -InterfaceMetric 5 -PolicyStore ActiveStore
 if (-not $existing) {
     New-NetIPAddress -InterfaceIndex $InterfaceIndex -IPAddress "10.253.0.2" -PrefixLength 32 -PolicyStore ActiveStore -ErrorAction Stop | Out-Null
 }
@@ -32,6 +33,7 @@ if (-not $existing) {
 foreach ($prefix in $Prefixes -split ',') {
     New-NetRoute -DestinationPrefix $prefix -InterfaceIndex $InterfaceIndex -NextHop "0.0.0.0" -RouteMetric 1 -PolicyStore ActiveStore -ErrorAction Stop | Out-Null
 }
+Set-DnsClientServerAddress -InterfaceIndex $InterfaceIndex -ServerAddresses @("1.1.1.1", "9.9.9.9")
 
 if ($BlockIPv6) {
     if (-not (Get-NetFirewallRule -DisplayName $Rule -ErrorAction SilentlyContinue)) {
