@@ -109,6 +109,7 @@ public final class BladeVpn extends VpnService {
                 host,
                 intent.getIntExtra("port", 9443),
                 intent.getStringExtra("sni") == null ? host : intent.getStringExtra("sni"),
+                intent.getStringExtra("marker") == null ? "sync/1" : intent.getStringExtra("marker"),
                 key,
                 intent.getStringExtra("caPem"));
         } catch (IllegalArgumentException error) {
@@ -199,8 +200,14 @@ public final class BladeVpn extends VpnService {
                 SSLParameters parameters = tls.getSSLParameters();
                 parameters.setEndpointIdentificationAlgorithm("HTTPS");
                 parameters.setApplicationProtocols(new String[]{"http/1.1"});
-                parameters.setServerNames(java.util.Collections.singletonList(
-                    new javax.net.ssl.SNIHostName(profile.serverName)));
+                // SNI only for real hostnames; Java rejects IP literals here,
+                // and an IP profile legitimately connects without SNI.
+                if (profile.serverName.matches("[0-9.]+")) {
+                    parameters.setServerNames(java.util.Collections.emptyList());
+                } else {
+                    parameters.setServerNames(java.util.Collections.singletonList(
+                        new javax.net.ssl.SNIHostName(profile.serverName)));
+                }
                 tls.setSSLParameters(parameters);
                 tls.startHandshake();
                 phase = "авторизация";
@@ -360,7 +367,7 @@ public final class BladeVpn extends VpnService {
         String tag = hex(mac.doFinal(("vpn-bot-lab-transport-v1\0" + timestamp + "\0" + nonce)
             .getBytes(StandardCharsets.US_ASCII)));
         String request = "POST /connect HTTP/1.1\r\nHost: " + profile.serverName
-            + "\r\nConnection: Upgrade\r\nUpgrade: sync/1\r\nX-Session-Time: " + timestamp
+            + "\r\nConnection: Upgrade\r\nUpgrade: " + profile.marker + "\r\nX-Session-Time: " + timestamp
             + "\r\nX-Session-Nonce: " + nonce + "\r\nX-Session-Tag: " + tag + "\r\n\r\n";
         output.write(request.getBytes(StandardCharsets.US_ASCII));
         output.flush();

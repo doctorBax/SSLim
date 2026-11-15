@@ -7,6 +7,7 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_PORT: u16 = 9443;
+pub const DEFAULT_MARKER: &str = "sync/1";
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct Profile {
@@ -15,18 +16,26 @@ pub struct Profile {
     #[serde(default = "default_port")]
     pub port: u16,
     pub server_name: String,
+    #[serde(default = "default_marker")]
+    pub marker: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub secret_base64: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub secret_file: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ca_file: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ca_base64: Option<String>,
     #[serde(default)]
     pub stats: bool,
 }
 
 fn default_port() -> u16 {
     DEFAULT_PORT
+}
+
+fn default_marker() -> String {
+    DEFAULT_MARKER.to_owned()
 }
 
 fn valid_token(value: &str, extra: &str) -> bool {
@@ -41,6 +50,7 @@ impl Profile {
         ensure!(valid_token(&self.name, ""), "profile name may contain only letters, digits, '.', '_' and '-'");
         ensure!(valid_token(&self.host, ":"), "host may contain only letters, digits, '.', '_', '-', ':'");
         ensure!(valid_token(&self.server_name, ""), "server name may contain only letters, digits, '.', '_' and '-'");
+        ensure!(valid_token(&self.marker, "/"), "upgrade marker may contain only letters, digits, '.', '_', '-', '/'");
         ensure!(self.port > 0, "port must be positive");
         Ok(())
     }
@@ -69,10 +79,14 @@ impl Profile {
         } else {
             bail!("profile has no secret to export");
         };
-        Ok(format!(
-            "sslim://{}:{}?sni={}&k={}&n={}",
-            self.host, self.port, self.server_name, secret, self.name
-        ))
+        let mut uri = format!(
+            "sslim://{}:{}?sni={}&k={}&u={}&n={}",
+            self.host, self.port, self.server_name, secret, self.marker, self.name
+        );
+        if let Some(ca) = &self.ca_base64 {
+            uri.push_str(&format!("&ca={}", BASE64.encode(ca.as_bytes())));
+        }
+        Ok(uri)
     }
 
     pub fn from_uri(uri: &str) -> Result<Self> {
@@ -90,6 +104,8 @@ impl Profile {
         let mut sni = String::new();
         let mut key = String::new();
         let mut label = String::new();
+        let mut marker = String::new();
+        let mut ca = None;
         for pair in query.split('&').filter(|pair| !pair.is_empty()) {
             let (name, value) = pair
                 .split_once('=')
@@ -98,6 +114,10 @@ impl Profile {
                 "sni" => sni = value.to_owned(),
                 "k" => key = value.to_owned(),
                 "n" => label = value.to_owned(),
+                "u" => marker = value.to_owned(),
+                "ca" => ca = Some(String::from_utf8(
+                    BASE64.decode(value).context("ca= parameter is not valid base64")?,
+                )?),
                 _ => {}
             }
         }
@@ -106,9 +126,11 @@ impl Profile {
             host: host.to_owned(),
             port,
             server_name: if sni.is_empty() { host.to_owned() } else { sni },
+            marker: if marker.is_empty() { DEFAULT_MARKER.to_owned() } else { marker },
             secret_base64: key,
             secret_file: None,
             ca_file: None,
+            ca_base64: ca,
             stats: false,
         };
         ensure!(!profile.secret_base64.is_empty(), "URI is missing the secret parameter (k=)");
@@ -215,9 +237,11 @@ mod tests {
             host: "vpn.example.com".into(),
             port: 9443,
             server_name: "vpn.example.com".into(),
+            marker: DEFAULT_MARKER.to_owned(),
             secret_base64: BASE64.encode([0x5au8; 32]),
             secret_file: None,
             ca_file: None,
+            ca_base64: None,
             stats: false,
         }
     }

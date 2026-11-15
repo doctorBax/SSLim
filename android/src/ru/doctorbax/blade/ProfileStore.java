@@ -26,16 +26,18 @@ public final class ProfileStore {
         public final String host;
         public final int port;
         public final String serverName;
+        public final String marker;
         public final byte[] secret;
         public final String caPem;
 
         Profile(String id, String name, String host, int port, String serverName,
-                byte[] secret, String caPem) {
+                String marker, byte[] secret, String caPem) {
             this.id = id;
             this.name = name;
             this.host = host;
             this.port = port;
             this.serverName = serverName;
+            this.marker = marker;
             this.secret = secret;
             this.caPem = caPem;
         }
@@ -92,6 +94,7 @@ public final class ProfileStore {
                 host,
                 item.optInt("port", 9443),
                 item.optString("sni", host),
+                item.optString("marker", "sync/1"),
                 secret,
                 item.optString("caPem", null));
         } catch (Exception error) {
@@ -106,6 +109,7 @@ public final class ProfileStore {
         item.put("host", profile.host);
         item.put("port", profile.port);
         item.put("sni", profile.serverName);
+        item.put("marker", profile.marker);
         item.put("secret", Base64.getEncoder().encodeToString(profile.secret));
         if (profile.caPem != null && !profile.caPem.isEmpty()) item.put("caPem", profile.caPem);
         return item;
@@ -169,7 +173,7 @@ public final class ProfileStore {
         return removed;
     }
 
-    /** Parse an sslim://host:port?sni=...&k=BASE64&n=label link into a profile. */
+    /** Parse an sslim://host:port?sni=...&k=BASE64&u=marker&ca=BASE64&n=label link into a profile. */
     public static Profile fromUri(String uri) throws Exception {
         if (!uri.startsWith("sslim://")) throw new IllegalArgumentException("Ожидается ссылка sslim://");
         java.net.URI parsed = new java.net.URI(uri);
@@ -177,8 +181,10 @@ public final class ProfileStore {
         if (host == null || host.isEmpty()) throw new IllegalArgumentException("В ссылке нет адреса сервера");
         int port = parsed.getPort() == -1 ? 9443 : parsed.getPort();
         String sni = host;
+        String marker = "sync/1";
         byte[] secret = null;
         String label = null;
+        String caPem = null;
         for (String pair : (parsed.getRawQuery() == null ? "" : parsed.getRawQuery()).split("&")) {
             int eq = pair.indexOf('=');
             if (eq <= 0) continue;
@@ -192,12 +198,20 @@ public final class ProfileStore {
             if (key.equals("k")) secret = Base64.getMimeDecoder().decode(value);
             else if (key.equals("sni")) sni = value;
             else if (key.equals("n")) label = value;
+            else if (key.equals("u")) marker = value.isEmpty() ? "sync/1" : value;
+            else if (key.equals("ca")) {
+                try {
+                    caPem = new String(Base64.getMimeDecoder().decode(value), StandardCharsets.UTF_8);
+                } catch (Exception ignored) {
+                    // A malformed CA is ignored; the editor allows entering it manually.
+                }
+            }
         }
         if (secret == null || secret.length < MIN_SECRET) {
             throw new IllegalArgumentException("В ссылке нет секрета (k=) или он короче 32 байт");
         }
         String name = label == null || label.isEmpty() ? host : label;
-        return new Profile(newId(), name, host, port, sni, secret, null);
+        return new Profile(newId(), name, host, port, sni, marker, secret, caPem);
     }
 
     public static String newId() {

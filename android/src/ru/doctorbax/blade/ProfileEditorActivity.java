@@ -34,6 +34,7 @@ public final class ProfileEditorActivity extends Activity {
     private static final Typeface BOLD = Typeface.create("sans-serif", Typeface.BOLD);
 
     private String editingId;
+    private String editingMarker = "sync/1";
     private EditText link;
     private EditText name;
     private EditText host;
@@ -146,6 +147,7 @@ public final class ProfileEditorActivity extends Activity {
                 surface(SURFACE, 16, BORDER), null));
             delete.setOnClickListener(view -> confirmDelete());
             add(content, delete, 10);
+            editingMarker = existing.marker;
             fill(existing);
         }
     }
@@ -196,7 +198,7 @@ public final class ProfileEditorActivity extends Activity {
             }
             ProfileStore.Profile profile = new ProfileStore.Profile(
                 editingId == null ? ProfileStore.newId() : editingId,
-                nameValue, hostValue, portNumber, sniValue, key, ca);
+                nameValue, hostValue, portNumber, sniValue, editingMarker, key, ca);
             ProfileStore.save(this, profile);
             setResult(RESULT_OK);
             finish();

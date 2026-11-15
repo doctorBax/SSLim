@@ -156,7 +156,29 @@ public final class MainActivity extends Activity {
         add(content, stats, 16);
 
         setContentView(scroll);
+        handleIncomingIntent(getIntent());
         renderStatus();
+    }
+
+    @Override protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleIncomingIntent(intent);
+    }
+
+    /** sslim:// links (from a browser or chat) import the profile silently. */
+    private void handleIncomingIntent(Intent intent) {
+        if (intent == null || intent.getData() == null) return;
+        android.util.Log.d("Blade", "incoming profile link, length " + intent.getData().toString().length());
+        try {
+            ProfileStore.Profile imported = ProfileStore.fromUri(
+                intent.getData().toString().replaceAll("\\s+", ""));
+            ProfileStore.save(this, imported);
+            toast("Профиль «" + imported.name + "» добавлен");
+        } catch (Exception error) {
+            android.util.Log.w("Blade", "import failed", error);
+            toast("Не удалось импортировать: " + error.getMessage());
+        }
     }
 
     private TextView addStat(LinearLayout stats, String title) {
@@ -443,6 +465,7 @@ public final class MainActivity extends Activity {
             .putExtra("host", profile.host)
             .putExtra("port", profile.port)
             .putExtra("sni", profile.serverName)
+            .putExtra("marker", profile.marker)
             .putExtra("secretBase64",
                 android.util.Base64.encodeToString(profile.secret, android.util.Base64.NO_WRAP));
         if (profile.caPem != null && !profile.caPem.isEmpty()) {

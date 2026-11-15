@@ -147,6 +147,7 @@ pub async fn connect(
     server_name: &str,
     connector: TlsConnector,
     key: &hmac::Key,
+    marker: &str,
 ) -> Result<BufReader<tokio_rustls::client::TlsStream<TcpStream>>> {
     let name = ServerName::try_from(server_name.to_owned())?;
     let tcp = timeout(Duration::from_secs(10), TcpStream::connect((host, port))).await??;
@@ -157,7 +158,7 @@ pub async fn connect(
     );
     let (time, nonce, tag) = credentials(key)?;
     let request = format!(
-        "POST /connect HTTP/1.1\r\nHost: {server_name}\r\nConnection: Upgrade\r\nUpgrade: sync/1\r\nX-Session-Time: {time}\r\nX-Session-Nonce: {nonce}\r\nX-Session-Tag: {tag}\r\n\r\n"
+        "POST /connect HTTP/1.1\r\nHost: {server_name}\r\nConnection: Upgrade\r\nUpgrade: {marker}\r\nX-Session-Time: {time}\r\nX-Session-Nonce: {nonce}\r\nX-Session-Tag: {tag}\r\n\r\n"
     );
     timeout(IO_TIMEOUT, send(&mut stream, request.as_bytes())).await??;
     let response = timeout(IO_TIMEOUT, headers(&mut stream)).await??;

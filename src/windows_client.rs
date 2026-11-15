@@ -107,9 +107,11 @@ fn resolve(args: &BladeArgs) -> Result<Resolved> {
             host: flags.host.clone().context("--host is required with --secret-file")?,
             port: profile::DEFAULT_PORT,
             server_name: String::new(),
+            marker: profile::DEFAULT_MARKER.to_owned(),
             secret_base64: String::new(),
             secret_file: None,
             ca_file: None,
+            ca_base64: None,
             stats: false,
         }
     } else {
@@ -374,6 +376,7 @@ async fn connect_once(resolved: &Resolved) -> Result<()> {
         &profile.server_name,
         tls,
         &resolved.key,
+        &profile.marker,
     )
     .await?;
     println!("{OK_MARK} tunnel established, exit will be checked shortly");
@@ -465,6 +468,14 @@ pub async fn run(args: BladeArgs) -> Result<()> {
                 profile.name = name;
             }
             profile.validate()?;
+            // A CA delivered inside the link is unpacked next to the profile.
+            if let Some(ca) = profile.ca_base64.clone() {
+                let ca_path = profile::profiles_dir()?.join(format!("{}.ca.pem", profile.name));
+                std::fs::write(&ca_path, ca)?;
+                profile.ca_file = Some(ca_path);
+                profile.ca_base64 = None;
+                profile::save(&profile)?;
+            }
             let path = profile::save(&profile)?;
             println!(
                 "{OK_MARK} profile {:?} saved to {}",

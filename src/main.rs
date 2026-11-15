@@ -304,6 +304,7 @@ async fn main() -> Result<()> {
                 &endpoint.server_name,
                 tls,
                 &key,
+                profile::DEFAULT_MARKER,
             )
             .await?;
             relay(stream, tun).await
@@ -315,6 +316,7 @@ async fn main() -> Result<()> {
                 &endpoint.server_name,
                 client_tls(endpoint.ca.as_deref())?,
                 &read_key(&endpoint.secret_file)?,
+                profile::DEFAULT_MARKER,
             )
             .await?;
             let sample = [
@@ -358,9 +360,11 @@ async fn main() -> Result<()> {
                 host: host.clone(),
                 port,
                 server_name: server_name.unwrap_or(host),
+                marker: profile::DEFAULT_MARKER.to_owned(),
                 secret_base64: String::new(),
                 secret_file: Some(secret_file.clone()),
                 ca_file: None,
+                ca_base64: None,
                 stats: false,
             };
             let uri = profile.to_uri()?;

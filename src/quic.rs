@@ -325,7 +325,7 @@ pub async fn run(args: Args) -> Result<()> {
                     let host = address.ip().to_string();
                     let connector = client_tls(ca.as_deref())?;
                     let stream =
-                        crate::session::connect(&host, port, &server_name, connector, &key).await?;
+                        crate::session::connect(&host, port, &server_name, connector, &key, crate::profile::DEFAULT_MARKER).await?;
                     println!("UDP handshake timed out; using TCP v1");
                     relay(stream, tun).await
                 }
