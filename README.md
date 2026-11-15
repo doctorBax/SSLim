@@ -21,6 +21,7 @@ Linux TUN  ←→  Клиент  ═══════ TLS 1.3 ═════�
 На чистом Ubuntu VPS (x86_64) укажите публичный IPv4 или DNS-имя вместо `vpn.example.com`:
 
 ```bash
+sudo apt-get install -y conntrack
 curl -fsSLO https://raw.githubusercontent.com/doctorBax/SSLim/main/scripts/install-server.sh
 sudo bash install-server.sh vpn.example.com
 ```

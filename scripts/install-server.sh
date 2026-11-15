@@ -15,6 +15,10 @@ fi
 for command in curl tar sha256sum openssl ip iptables sysctl systemctl; do
   command -v "$command" >/dev/null || { echo "Missing dependency: $command" >&2; exit 1; }
 done
+if ! command -v conntrack >/dev/null; then
+  echo 'Install conntrack first (Ubuntu: apt-get install conntrack).' >&2
+  exit 1
+fi
 dir=/etc/sslim
 files=(/usr/local/bin/sslim /usr/local/bin/sslim-client "$dir/network" /etc/systemd/system/sslim.service)
 if $upgrade; then
@@ -101,6 +105,10 @@ cat > "$dir/network" <<'EOF'
 #!/bin/bash
 set -euo pipefail
 if [[ $1 == up ]]; then
+  # Addresses restart at the beginning of the pool; discard previous NAT state.
+  if [[ -n $(conntrack -L -f ipv4 -s 10.253.0.0/16) ]]; then
+    conntrack -D -f ipv4 -s 10.253.0.0/16
+  fi
   ip tuntap add dev sslim0 mode tun
   ip addr add 10.253.0.1 peer 10.253.0.2 dev sslim0
   ip link set sslim0 mtu 1280 up

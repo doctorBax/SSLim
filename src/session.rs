@@ -329,6 +329,9 @@ impl Server {
         };
         timeout(IO_TIMEOUT, send(&mut stream, UPGRADE)).await??;
         match tun {
+            Some(tun) if self.multi_tun => {
+                relay_checked(stream, tun, Some(Ipv4Addr::new(10, 253, 0, 2))).await
+            }
             Some(tun) => relay(stream, tun).await,
             None => echo(stream, self.device).await,
         }
