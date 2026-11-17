@@ -100,8 +100,11 @@ public final class BladeVpn extends VpnService {
             disconnect();
             return START_NOT_STICKY;
         }
-        if (running) return START_NOT_STICKY;
+        if (running) return START_STICKY;
         config = readConfig(intent);
+        // Always-on VPN starts the service without our explicit profile extras.
+        // Load the selected profile so Android lockdown can restore the tunnel.
+        if (config == null) config = ProfileStore.active(this);
         if (config == null) {
             status = "Нет профиля: откройте Blade и заполните настройки";
             return START_NOT_STICKY;
@@ -113,7 +116,7 @@ public final class BladeVpn extends VpnService {
         stopping = false;
         worker = new Thread(this::runTunnel, "blade-vpn");
         worker.start();
-        return START_NOT_STICKY;
+        return START_STICKY;
     }
 
     private ProfileStore.Profile readConfig(Intent intent) {
@@ -180,6 +183,10 @@ public final class BladeVpn extends VpnService {
                 } catch (Exception error) {
                     if (stopping) return;
                     Log.w("Blade", "VPN failed during " + phase, error);
+                    if (!BladeOptions.autoReconnect(this)) {
+                        status = "Соединение потеряно — переподключение отключено";
+                        return;
+                    }
                     delay = nextDelay(attempt++);
                     status = "Переподключение через " + (delay / 1000) + " с…";
                     try {
@@ -275,10 +282,11 @@ public final class BladeVpn extends VpnService {
                 Traffic counters = new Traffic();
                 synchronized (this) {
                     if (stopping) return;
+                    String[] dnsServers = BladeOptions.dnsServers(this);
                     device = new Builder().setSession("Blade")
                         .setMtu(MTU).addAddress(address, 32)
                         .addRoute("0.0.0.0", 0)
-                        .addDnsServer("1.1.1.1").addDnsServer("9.9.9.9")
+                        .addDnsServer(dnsServers[0]).addDnsServer(dnsServers[1])
                         .setBlocking(false).establish();
                     if (device == null) throw new IOException("VPN permission revoked");
                     tun = device;
@@ -392,7 +400,7 @@ public final class BladeVpn extends VpnService {
                     }
                     nextPing = now + 3000;
                 }
-                if (now >= nextReport) {
+                if (now >= nextReport && BladeOptions.diagnostics(this)) {
                     Log.i("BladePerf", "up_bytes=" + counters.upload.get()
                         + " down_bytes=" + counters.download.get()
                         + " up_packets=" + counters.uplinkPackets.get()
@@ -401,8 +409,8 @@ public final class BladeVpn extends VpnService {
                         + " tun_eagain=" + counters.tunBackpressure.get()
                         + " tun_wait_ms=" + counters.tunWaitMs.get()
                         + " tun_queue_peak=" + counters.tunQueuePeak.get());
-                    nextReport = now + PERF_REPORT_MS;
                 }
+                if (now >= nextReport) nextReport = now + PERF_REPORT_MS;
 
                 int bytes = 0;
                 int packets = 0;
