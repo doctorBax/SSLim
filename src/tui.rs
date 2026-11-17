@@ -1,5 +1,5 @@
 //! Cross-platform interactive terminal menus. Existing clap commands remain usable.
-use std::io::{self, IsTerminal, Read, Write};
+use std::io::{self, IsTerminal, Write};
 use anyhow::{Context, Result, bail, ensure};
 use clap::Parser;
 use crate::{Cli, dispatch_command};
@@ -45,6 +45,8 @@ mod win {
         fn GetConsoleMode(h: Handle, mode: *mut u32) -> i32;
         fn SetConsoleMode(h: Handle, mode: u32) -> i32;
         fn WaitForSingleObject(h: Handle, ms: u32) -> u32;
+        fn ReadFile(h: Handle, buffer: *mut u8, count: u32,
+            read: *mut u32, overlapped: *mut c_void) -> i32;
     }
     pub struct Raw {
         input: Handle,
@@ -87,6 +89,16 @@ mod win {
     pub fn ready(ms: u32) -> bool {
         unsafe { WaitForSingleObject(GetStdHandle((-10i32) as u32), ms) == 0 }
     }
+
+    pub fn read_byte() -> io::Result<u8> {
+        let mut data = [0u8; 1];
+        let mut read = 0u32;
+        let okay = unsafe { ReadFile(GetStdHandle((-10i32) as u32),
+            data.as_mut_ptr(), 1, &mut read, std::ptr::null_mut()) };
+        if okay == 0 { return Err(io::Error::last_os_error()); }
+        if read == 0 { return Err(io::ErrorKind::UnexpectedEof.into()); }
+        Ok(data[0])
+    }
 }
 #[cfg(windows)]
 use win::Raw;
@@ -99,23 +111,41 @@ fn ready(ms: i32) -> bool {
     #[cfg(windows)] { win::ready(ms as u32) }
 }
 
+/// Bypass Rust's buffered stdin while in raw mode: otherwise the first read
+/// prefetches CSI bytes and poll(fd) falsely thinks an arrow was only Escape.
+fn read_byte() -> io::Result<u8> {
+    #[cfg(unix)] {
+        let mut b = [0u8; 1];
+        loop {
+            let got = unsafe { libc::read(0, b.as_mut_ptr().cast(), 1) };
+            if got == 1 { return Ok(b[0]); }
+            if got == 0 { return Err(io::ErrorKind::UnexpectedEof.into()); }
+            let error = io::Error::last_os_error();
+            if error.kind() != io::ErrorKind::Interrupted { return Err(error); }
+        }
+    }
+    #[cfg(windows)] { win::read_byte() }
+}
+
 fn key() -> io::Result<Key> {
-    let mut b = [0u8; 1];
-    if io::stdin().read_exact(&mut b).is_err() { return Ok(Key::Back); }
-    Ok(match b[0] {
+    let b = match read_byte() { Ok(value) => value, Err(_) => return Ok(Key::Back) };
+    Ok(match b {
         b'\r' | b'\n' => Key::Select,
         b'0' | b'q' | b'Q' | 8 | 127 => Key::Back,
         b'k' | b'K' | b'w' | b'W' => Key::Up,
         b'j' | b'J' | b's' | b'S' => Key::Down,
-        b'1'..=b'9' => Key::Digit((b[0] - b'1') as usize),
+        b'1'..=b'9' => Key::Digit((b - b'1') as usize),
         27 => {
             if !ready(80) { Key::Back } else {
-                io::stdin().read_exact(&mut b)?;
-                if b[0] != b'[' && b[0] != b'O' || !ready(80) {
+                let next = read_byte()?;
+                if (next != b'[' && next != b'O') || !ready(80) {
                     Key::Back
                 } else {
-                    io::stdin().read_exact(&mut b)?;
-                    match b[0] { b'A' => Key::Up, b'B' => Key::Down, _ => Key::Other }
+                    match read_byte()? {
+                        b'A' => Key::Up,
+                        b'B' => Key::Down,
+                        _ => Key::Other,
+                    }
                 }
             }
         }
