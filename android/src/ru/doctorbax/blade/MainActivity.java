@@ -29,20 +29,32 @@ import android.widget.Toast;
 import java.util.Locale;
 
 public final class MainActivity extends Activity {
-    private static final int BACKGROUND = 0xff0b121a;
-    private static final int SURFACE = 0xff111e2a;
-    private static final int BORDER = 0xff263746;
-    private static final int WHITE = 0xffeff9f6;
-    private static final int MUTED = 0xffacbfcc;
-    private static final int MINT = 0xffb7f4cd;
-    private static final int CORAL = 0xffffb4a8;
+    private int BACKGROUND;
+    private int SURFACE;
+    private int BORDER;
+    private int WHITE;
+    private int MUTED;
+    private int MINT;
+    private int CORAL;
+    private String appearanceStamp;
+
+    private void loadPalette() {
+        BACKGROUND = BladeAppearance.background(this);
+        SURFACE = BladeAppearance.surface(this);
+        BORDER = BladeAppearance.border(this);
+        WHITE = BladeAppearance.text(this);
+        MUTED = BladeAppearance.muted(this);
+        MINT = BladeAppearance.accent(this);
+        CORAL = BladeAppearance.danger(this);
+        appearanceStamp = BladeAppearance.stamp(this);
+    }
     private static final int REQUEST_VPN = 1;
     private static final int REQUEST_SETTINGS = 3;
     private static final Typeface MEDIUM = Typeface.create("sans-serif-medium", Typeface.NORMAL);
     private static final Typeface BOLD = Typeface.create("sans-serif", Typeface.BOLD);
 
     private final Handler handler = new Handler(Looper.getMainLooper());
-    private HeroView hero;
+    private BladeHeroView hero;
     private TextView chip;
     private TextView headline;
     private TextView details;
@@ -70,9 +82,8 @@ public final class MainActivity extends Activity {
     @Override public void onCreate(Bundle savedState) {
         super.onCreate(savedState);
         if (Build.VERSION.SDK_INT >= 30) getWindow().setDecorFitsSystemWindows(false);
-        getWindow().setStatusBarColor(BACKGROUND);
-        getWindow().setNavigationBarColor(BACKGROUND);
-        getWindow().getDecorView().setSystemUiVisibility(0);
+        loadPalette();
+        BladeAppearance.applyWindow(this);
 
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
@@ -106,19 +117,25 @@ public final class MainActivity extends Activity {
         // Hero panel is the connect button itself.
         FrameLayout heroPanel = new FrameLayout(this);
         GradientDrawable panel = new GradientDrawable(
-            GradientDrawable.Orientation.TL_BR, new int[]{0xff142a37, 0xff0f1b28});
+            GradientDrawable.Orientation.TL_BR, new int[]{
+                BladeAppearance.heroTop(this), BladeAppearance.heroBottom(this)});
         panel.setCornerRadius(dp(28));
         panel.setStroke(dp(1), BORDER);
         GradientDrawable pressed = new GradientDrawable(
-            GradientDrawable.Orientation.TL_BR, new int[]{0xff1b3348, 0xff122333});
+            GradientDrawable.Orientation.TL_BR, new int[]{
+                BladeAppearance.heroPressedTop(this), BladeAppearance.heroPressedBottom(this)});
         heroPanel.setBackground(new RippleDrawable(
-            ColorStateList.valueOf(0x40b7f4cd), panel, pressed));
+            ColorStateList.valueOf(MINT & 0x40ffffff), panel, pressed));
         heroPanel.setClickable(true);
-        heroPanel.setOnClickListener(view -> toggleConnection());
+        heroPanel.setOnClickListener(view -> {
+            BladeAppearance.haptic(view);
+            toggleConnection();
+        });
         heroPanel.setContentDescription("Подключить или отключить VPN");
-        hero = new HeroView(this);
+        hero = new BladeHeroView(this);
         heroPanel.addView(hero, new FrameLayout.LayoutParams(-1, -1));
-        ImageView centerArrow = arrow(82, 40, BACKGROUND, MINT, 24);
+        ImageView centerArrow = arrow(82, 40, BladeAppearance.onAccent(this), MINT,
+            BladeAppearance.square(this) ? 18 : 41);
         heroPanel.addView(centerArrow, new FrameLayout.LayoutParams(dp(82), dp(82), Gravity.CENTER));
         int screenHeight = getResources().getConfiguration().screenHeightDp;
         int heroHeight = Math.max(168, Math.min(280, screenHeight / 3));
@@ -160,8 +177,10 @@ public final class MainActivity extends Activity {
         profileCard.setForeground(new RippleDrawable(
             ColorStateList.valueOf(0x30ffffff), null, surface(SURFACE, 18, 0)));
         profileCard.setContentDescription("Профиль сервера. Открыть настройки");
-        profileCard.setOnClickListener(view -> startActivityForResult(
-                new Intent(this, ProfilesActivity.class), REQUEST_SETTINGS));
+        profileCard.setOnClickListener(view -> {
+            BladeAppearance.haptic(view);
+            startActivityForResult(new Intent(this, ProfilesActivity.class), REQUEST_SETTINGS);
+        });
         LinearLayout profileText = column();
         profileText.addView(label("СЕРВЕР", 10, MUTED, MEDIUM));
         activeProfileName = label("", 15, WHITE, BOLD);
@@ -228,6 +247,7 @@ public final class MainActivity extends Activity {
         long now = SystemClock.elapsedRealtime();
         long down = counters.download.get();
         long up = counters.upload.get();
+        if (hero != null) hero.setTraffic(up, down);
         long elapsed = now - sampledAt;
         if (currentTraffic != counters || sampledAt == 0) {
             currentTraffic = counters;
@@ -264,7 +284,8 @@ public final class MainActivity extends Activity {
         chip.setText(connected ? "В СЕТИ" : starting ? "СОЕДИНЕНИЕ" : retrying ? "ПОВТОР" :
             stopping ? "ОТКЛЮЧЕНИЕ" : failed ? "СБОЙ" : "НЕ АКТИВЕН");
         chip.setTextColor(tone);
-        chip.setBackground(surface(connected ? 0xff17342a : SURFACE, 20, BORDER));
+        chip.setBackground(surface(connected ? BladeAppearance.selected(this) : SURFACE,
+            20, BORDER));
 
         headline.setText(connected ? "VPN подключён" : starting ? "Подключаемся…" :
             stopping ? "Отключаемся…" : retrying ? "Восстанавливаем связь…" :
@@ -377,135 +398,10 @@ public final class MainActivity extends Activity {
         return Math.round(value * getResources().getDisplayMetrics().density);
     }
 
-    /**
-     * Rings, glow, waves and particles around the central arrow. The waves and
-     * particles stay subtle on purpose: three expanding rings, nine slow dots.
-     */
-    private final class HeroView extends View {
-        private static final int PARTICLES = 9;
-        private static final long WAVE_MS = 1900;
-        private static final int WAVES = 3;
-
-        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final Paint glow = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final float[] angle = new float[PARTICLES];
-        private final float[] orbitRadius = new float[PARTICLES];
-        private final float[] dotRadius = new float[PARTICLES];
-        private final float[] angularSpeed = new float[PARTICLES];
-        private boolean connected;
-        private boolean animating;
-        private boolean animationVisible = true;
-        private long stateSince;
-        private RadialGradient connectedGlow;
-        private RadialGradient connectingGlow;
-
-        HeroView(MainActivity activity) {
-            super(activity);
-            setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-            java.util.Random random = new java.util.Random(7);
-            for (int i = 0; i < PARTICLES; i++) {
-                angle[i] = random.nextFloat() * 360f;
-                orbitRadius[i] = 62f + random.nextFloat() * 48f;
-                dotRadius[i] = 1.4f + random.nextFloat() * 1.2f;
-                angularSpeed[i] = (2.5f + random.nextFloat() * 4f) * (random.nextBoolean() ? 1f : -1f);
-            }
-        }
-
-        void setState(boolean nowConnected, boolean nowAnimating) {
-            if (nowConnected != connected || nowAnimating != animating) {
-                connected = nowConnected;
-                animating = nowConnected || nowAnimating;
-                stateSince = SystemClock.elapsedRealtime();
-                invalidate();
-            }
-            if (animating && animationVisible) postInvalidateOnAnimation();
-        }
-
-        @Override protected void onSizeChanged(int width, int height, int oldWidth, int oldHeight) {
-            super.onSizeChanged(width, height, oldWidth, oldHeight);
-            float[] stops = {0f, 0.55f, 1f};
-            connectedGlow = new RadialGradient(width / 2f, height / 2f, dp(86),
-                new int[]{0x66b7f4cd, 0x267fe4b0, 0x007fe4b0}, stops, android.graphics.Shader.TileMode.CLAMP);
-            connectingGlow = new RadialGradient(width / 2f, height / 2f, dp(86),
-                new int[]{0x5576d9e8, 0x2276d9e8, 0x0076d9e8}, stops, android.graphics.Shader.TileMode.CLAMP);
-        }
-
-        void setAnimationVisible(boolean visible) {
-            animationVisible = visible;
-            if (visible && animating) postInvalidateOnAnimation();
-        }
-
-        @Override protected void onDraw(Canvas canvas) {
-            super.onDraw(canvas);
-            float cx = getWidth() / 2f;
-            float cy = getHeight() / 2f;
-            long t = SystemClock.elapsedRealtime();
-            float arrowRadius = dp(41);
-
-            // The glow signals both connection setup and an active tunnel.
-            if (animating) {
-                float pulse = 0.78f + 0.22f * (float) Math.sin((t - stateSince) / 290.0);
-                glow.setShader(connected ? connectedGlow : connectingGlow);
-                glow.setAlpha((int) (255 * pulse));
-                canvas.drawCircle(cx, cy, dp(86), glow);
-            }
-
-            // Static guide rings (idle and active).
-            paint.setStyle(Paint.Style.STROKE);
-            paint.setStrokeWidth(dp(1));
-            paint.setColor(connected ? 0x427fe4b0 : 0x315c91aa);
-            for (int radius = 57; radius <= 125; radius += 17) {
-                canvas.drawCircle(cx, cy, dp(radius), paint);
-            }
-
-            // Expanding rings show progress before the server confirms the connection.
-            if (animating) {
-                float maxRadius = Math.min(getWidth(), getHeight()) / 2f - dp(6);
-                for (int i = 0; i < WAVES; i++) {
-                    float phase = ((t - stateSince) % WAVE_MS) / (float) WAVE_MS;
-                    phase = (phase + i / (float) WAVES) % 1f;
-                    float radius = arrowRadius + phase * (maxRadius - arrowRadius);
-                    paint.setStrokeWidth(dp(2) * (1f - phase * 0.7f));
-                    paint.setColor(connected ? 0x667fe4b0 : 0x6676d9e8);
-                    paint.setAlpha((int) ((connected ? 0x70 : 0x58) * (1f - phase)));
-                    canvas.drawCircle(cx, cy, radius, paint);
-                }
-                paint.setStrokeWidth(dp(1));
-            }
-
-            // Counter-rotating arcs make connection setup visible at a glance.
-            if (animating && !connected) {
-                float rotation = (t - stateSince) % 1250 / 1250f * 360f;
-                paint.setStyle(Paint.Style.STROKE);
-                paint.setStrokeWidth(dp(2.5f));
-                paint.setColor(0x9976d9e8);
-                canvas.drawArc(cx - dp(48), cy - dp(48), cx + dp(48), cy + dp(48),
-                    rotation, 115f, false, paint);
-                paint.setStrokeWidth(dp(1.5f));
-                paint.setColor(0x667fe4b0);
-                canvas.drawArc(cx - dp(59), cy - dp(59), cx + dp(59), cy + dp(59),
-                    -rotation * 0.72f, 72f, false, paint);
-            }
-
-            // Orbiting particles mark connection setup and the active tunnel.
-            if (animating) {
-                float fade = Math.min(1f, (t - stateSince) / 450f);
-                float maxRadius = Math.min(getWidth(), getHeight()) / 2f - dp(8);
-                for (int i = 0; i < PARTICLES; i++) {
-                    float a = (float) Math.toRadians(angle[i] + (t / 1000f) * angularSpeed[i]);
-                    float r = Math.min(dp(orbitRadius[i]), maxRadius)
-                        + dp(5f) * (float) Math.sin((t / 900f) + i);
-                    float x = cx + (float) Math.cos(a) * r;
-                    float y = cy + (float) Math.sin(a) * r;
-                    paint.setStyle(Paint.Style.FILL);
-                    paint.setColor(!connected ? 0xffa9ebf2 :
-                        i % 3 == 0 ? 0xffeafcf2 : 0xffb7f4cd);
-                    paint.setAlpha((int) (fade * (i % 3 == 0 ? 150 : 105)));
-                    canvas.drawCircle(x, y, dp(dotRadius[i]), paint);
-                }
-            }
-
-            if (animating && animationVisible) postInvalidateOnAnimation();
+    @Override protected void onResume() {
+        super.onResume();
+        if (!BladeAppearance.stamp(this).equals(appearanceStamp)) {
+            recreate();
         }
     }
 
