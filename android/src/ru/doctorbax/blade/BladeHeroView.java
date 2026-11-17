@@ -75,6 +75,11 @@ final class BladeHeroView extends View {
         return (int) (x * getResources().getDisplayMetrics().density + 0.5f);
     }
 
+    @Override protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+        super.onSizeChanged(w, h, oldw, oldh);
+        gradient = null;
+    }
+
     private static int alpha(int color, int a) {
         return (color & 0x00ffffff) | (Math.max(0, Math.min(255, a)) << 24);
     }
