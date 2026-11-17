@@ -41,7 +41,7 @@ def run(binary: str) -> None:
                 try:
                     output += os.read(master, 8192)
                 except OSError as error:
-                    raise AssertionError(f"Menu closed too early: {error}") from error
+                    raise AssertionError(f"Menu closed early: {error}; return={child.poll()}; output:\n" + output[-4000:].decode("utf-8", "replace")) from error
 
     try:
         expect("Главное меню · Linux")
