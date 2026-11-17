@@ -160,7 +160,8 @@ public final class MainActivity extends Activity {
         profileCard.setForeground(new RippleDrawable(
             ColorStateList.valueOf(0x30ffffff), null, surface(SURFACE, 18, 0)));
         profileCard.setContentDescription("Профиль сервера. Открыть настройки");
-        profileCard.setOnClickListener(view -> openSettings());
+        profileCard.setOnClickListener(view -> startActivityForResult(
+                new Intent(this, ProfilesActivity.class), REQUEST_SETTINGS));
         LinearLayout profileText = column();
         profileText.addView(label("СЕРВЕР", 10, MUTED, MEDIUM));
         activeProfileName = label("", 15, WHITE, BOLD);
@@ -300,7 +301,7 @@ public final class MainActivity extends Activity {
         }
         if (ProfileStore.active(this) == null) {
             toast("Сначала добавьте профиль сервера в настройках");
-            startActivityForResult(new Intent(this, SettingsActivity.class), REQUEST_SETTINGS);
+            startActivityForResult(new Intent(this, ProfilesActivity.class), REQUEST_SETTINGS);
             return;
         }
         Intent permission = VpnService.prepare(this);
