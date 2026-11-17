@@ -27,6 +27,7 @@ import android.widget.TextView;
 public final class AppearanceActivity extends Activity {
     private static final Typeface BOLD = Typeface.create("sans-serif-medium", Typeface.NORMAL);
     private BladeHeroView preview;
+    private ImageView previewArrow;
     private boolean demoConnected = true;
     private String appliedStamp;
 
@@ -130,8 +131,6 @@ public final class AppearanceActivity extends Activity {
 
         add(root,section("ИНТЕРАКТИВНЫЙ ПРЕДПРОСМОТР"),22);
         FrameLayout stage = new FrameLayout(this);
-        stage.setBackground(new GradientDrawable(GradientDrawable.Orientation.TL_BR,
-            new int[]{BladeAppearance.heroTop(this),BladeAppearance.heroBottom(this)}));
         stage.setClipToOutline(true);
         GradientDrawable stageBg = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
             new int[]{BladeAppearance.heroTop(this), BladeAppearance.heroBottom(this)});
@@ -143,6 +142,7 @@ public final class AppearanceActivity extends Activity {
         preview.setState(demoConnected, demoConnected);
         stage.addView(preview,new FrameLayout.LayoutParams(-1,-1));
         ImageView arrow = new ImageView(this);
+        previewArrow = arrow;
         arrow.setImageResource(R.drawable.ic_arrow_right);
         arrow.setColorFilter(BladeAppearance.onAccent(this));
         arrow.setPadding(dp(22),dp(22),dp(22),dp(22));
@@ -239,6 +239,7 @@ public final class AppearanceActivity extends Activity {
         TextView toggleText=label("Тактильная отдача",15,textColor(),true);
         toggle.addView(toggleText,new LinearLayout.LayoutParams(0,-2,1f));
         Switch haptics=new Switch(this);
+        haptics.setThumbTintList(ColorStateList.valueOf(primary()));
         haptics.setChecked(BladeAppearance.haptics(this));
         haptics.setContentDescription("Тактильная отдача");
         haptics.setOnCheckedChangeListener((button,checked)->{
@@ -276,6 +277,8 @@ public final class AppearanceActivity extends Activity {
         add(panel,swatch,5);
         swatch.getLayoutParams().height=dp(50);
         EditText hex=new EditText(this);
+        hex.setTextColor(textColor());
+        hex.setHintTextColor(muted());
         hex.setSingleLine(true);
         hex.setTextSize(15);
         hex.setHint("#RRGGBB");
@@ -353,6 +356,10 @@ public final class AppearanceActivity extends Activity {
     }
 
     private void refreshPreview() {
+        if (previewArrow != null) {
+            previewArrow.setColorFilter(BladeAppearance.onAccent(this));
+            previewArrow.setBackground(bgShape(primary(), BladeAppearance.square(this) ? 18 : 44, 0));
+        }
         if (preview != null) preview.invalidate();
     }
 }
