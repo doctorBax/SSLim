@@ -24,13 +24,23 @@ import java.util.List;
 
 /** Manage all existing profiles, import and edit flows without migrating stored data. */
 public final class ProfilesActivity extends Activity {
-    private static final int BACKGROUND = 0xff0b121a;
-    private static final int SURFACE = 0xff111e2a;
-    private static final int BORDER = 0xff263746;
-    private static final int WHITE = 0xffeff9f6;
-    private static final int MUTED = 0xffacbfcc;
-    private static final int MINT = 0xffb7f4cd;
-    private static final int CORAL = 0xffffb4a8;
+    private int BACKGROUND;
+    private int SURFACE;
+    private int BORDER;
+    private int WHITE;
+    private int MUTED;
+    private int MINT;
+    private int CORAL;
+
+    private void loadPalette() {
+        BACKGROUND = BladeAppearance.background(this);
+        SURFACE = BladeAppearance.surface(this);
+        BORDER = BladeAppearance.border(this);
+        WHITE = BladeAppearance.text(this);
+        MUTED = BladeAppearance.muted(this);
+        MINT = BladeAppearance.accent(this);
+        CORAL = BladeAppearance.danger(this);
+    }
     private static final int REQUEST_EDIT = 2;
     private static final Typeface MEDIUM = Typeface.create("sans-serif-medium", Typeface.NORMAL);
     private static final Typeface BOLD = Typeface.create("sans-serif", Typeface.BOLD);
@@ -43,9 +53,9 @@ public final class ProfilesActivity extends Activity {
     @Override public void onCreate(Bundle savedState) {
         super.onCreate(savedState);
         if (Build.VERSION.SDK_INT >= 30) getWindow().setDecorFitsSystemWindows(false);
-        getWindow().setStatusBarColor(BACKGROUND);
-        getWindow().setNavigationBarColor(BACKGROUND);
-        getWindow().getDecorView().setSystemUiVisibility(0);
+        loadPalette();
+        BladeAppearance.applyWindow(this);
+
 
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
@@ -166,7 +176,7 @@ public final class ProfilesActivity extends Activity {
         LinearLayout row = new LinearLayout(this);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(dp(16), dp(12), dp(16), dp(12));
-        row.setBackground(surface(isActive ? 0xff17342a : SURFACE, 16, BORDER));
+        row.setBackground(surface(isActive ? BladeAppearance.selected(this) : SURFACE, 16, BORDER));
         row.setClickable(true);
         row.setOnClickListener(view -> {
             ProfileStore.setActive(this, profile.id);
@@ -206,7 +216,7 @@ public final class ProfilesActivity extends Activity {
             row.setGravity(Gravity.CENTER_VERTICAL);
             row.setPadding(dp(16), dp(12), dp(16), dp(12));
             row.setBackground(surface(active != null && active.id.equals(profile.id)
-                ? 0xff17342a : SURFACE, 16, BORDER));
+                ? BladeAppearance.selected(this) : SURFACE, 16, BORDER));
             row.setClickable(true);
             LinearLayout text = column();
             text.addView(label(profile.name, 15, WHITE, BOLD));
