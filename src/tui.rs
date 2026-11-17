@@ -287,13 +287,74 @@ pub(crate) async fn profiles_menu() -> Result<()> {
     Ok(())
 }
 
+const RELEASES: &str = "https://github.com/doctorBax/SSLim/releases";
+const RELEASE_API: &str = "https://api.github.com/repos/doctorBax/SSLim/releases/latest";
+
+fn release_tag(json: &str) -> Option<&str> {
+    // Only read tag_name from the GitHub release object. The API response
+    // format is stable; malformed or unexpected replies are rejected.
+    let (_, tail) = json.split_once("\"tag_name\"")?;
+    let (_, tail) = tail.split_once(':')?;
+    let quoted = tail.trim_start().strip_prefix('"')?;
+    let end = quoted.find('"')?;
+    let tag = &quoted[..end];
+    if tag.bytes().all(|b| b.is_ascii_alphanumeric() || b".-_".contains(&b)) {
+        Some(tag)
+    } else {
+        None
+    }
+}
+
+fn version_parts(s: &str) -> Option<([u64; 3], bool)> {
+    let value = s.strip_prefix('v').unwrap_or(s);
+    let parts = value.split('.').collect::<Vec<_>>();
+    if parts.len() != 3 { return None; }
+    let major = parts[0].parse().ok()?;
+    let minor = parts[1].parse().ok()?;
+    let patch = parts[2].split('-').next()?.parse().ok()?;
+    Some(([major, minor, patch], parts[2].contains('-')))
+}
+
+fn newer_release(tag: &str, installed: &str) -> Option<bool> {
+    let (remote, remote_pre) = version_parts(tag)?;
+    let (local, local_pre) = version_parts(installed)?;
+    Some(remote > local || (remote == local && local_pre && !remote_pre))
+}
+
+fn check_updates() -> Result<()> {
+    println!("Проверка GitHub Releases (по запросу, без скачивания или установки)…");
+    let binary = if cfg!(windows) { "curl.exe" } else { "curl" };
+    let output = std::process::Command::new(binary)
+        .args(["-fsSL", "--max-time", "10",
+            "-H", "Accept: application/vnd.github+json", RELEASE_API])
+        .output()
+        .context("для проверки требуется curl; используйте ссылку ниже")?;
+    ensure!(output.status.success(), "GitHub не ответил; откройте {RELEASES}");
+    ensure!(output.stdout.len() <= 256 * 1024,
+        "неожиданно большой ответ GitHub");
+    let body = String::from_utf8(output.stdout)?;
+    let latest = release_tag(&body).context("ответ GitHub не содержит версию релиза")?;
+    let local = env!("CARGO_PKG_VERSION");
+    println!("Установлена версия: {local}\nПоследний опубликованный релиз: {latest}");
+    match newer_release(latest, local) {
+        Some(true) => println!("Доступно обновление. Скачайте его самостоятельно: {RELEASES}"),
+        Some(false) => println!("Новой стабильной версии не найдено."),
+        None => println!("Невозможно корректно сравнить версии. Проверьте {RELEASES}"),
+    }
+    Ok(())
+}
+
 pub(crate) async fn about_menu() -> Result<()> {
-    let options = ["Версия", "Ссылка на GitHub Releases"];
-    while let Some(n) = pick("О программе", &options)? {
-        match n {
-            0 => println!("SSLim CLI {}", env!("CARGO_PKG_VERSION")),
-            1 => println!("https://github.com/doctorBax/SSLim/releases\nОбновления только вручную."),
-            _ => {}
+    let options = ["Версия", "Проверить обновления вручную", "GitHub Releases"];
+    while let Some(n) = pick("О программе и обновления", &options)? {
+        let result = match n {
+            0 => { println!("SSLim CLI {}", env!("CARGO_PKG_VERSION")); Ok(()) }
+            1 => check_updates(),
+            2 => { println!("{RELEASES}\nАвтоматических обновлений нет."); Ok(()) }
+            _ => Ok(()),
+        };
+        if let Err(error) = result {
+            eprintln!("Не удалось проверить: {error:#}\n{RELEASES}");
         }
         pause();
     }
@@ -318,5 +379,14 @@ mod tests {
             "sslim", "keygen", "--output", "test.bin",
         ]);
         assert!(c.is_ok());
+    }
+
+    #[test]
+    fn semantic_release_comparison() {
+        assert_eq!(super::newer_release("v0.6.0", "0.6.0-dev"), Some(true));
+        assert_eq!(super::newer_release("v0.5.0", "0.6.0-dev"), Some(false));
+        assert_eq!(super::newer_release("v0.6.1", "0.6.0"), Some(true));
+        assert_eq!(super::newer_release("invalid", "0.6.0"), None);
+        assert_eq!(super::release_tag(r#"{"tag_name":"v0.6.0"}"#), Some("v0.6.0"));
     }
 }
