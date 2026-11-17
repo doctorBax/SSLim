@@ -1,4 +1,9 @@
 mod auth;
+mod tui;
+#[cfg(target_os = "linux")]
+mod tui_linux;
+#[cfg(windows)]
+mod tui_windows;
 #[cfg(target_os = "linux")]
 mod client_admin;
 mod profile;
@@ -249,14 +254,15 @@ fn set_congestion_control(listener: &TcpListener, name: &str) -> Result<()> {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
-    let command = Cli::parse().command;
-    if command.is_none() {
-        #[cfg(windows)]
-        return windows_client::console().await;
-        #[cfg(not(windows))]
-        anyhow::bail!("choose a command; run `sslim --help` for usage");
+    match Cli::parse().command {
+        Some(command) => dispatch_command(command).await,
+        None => tui::run().await,
     }
-    match command.expect("checked above") {
+}
+
+/// Keep the clap dispatch path intact for scripts, services and interactive menus.
+async fn dispatch_command(command: Command) -> Result<()> {
+    match command {
         #[cfg(windows)]
         Command::Blade(args) => windows_client::run(args).await,
         #[cfg(target_os = "linux")]
