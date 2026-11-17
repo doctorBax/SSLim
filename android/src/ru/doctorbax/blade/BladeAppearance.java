@@ -87,7 +87,14 @@ final class BladeAppearance {
     static int text(Context c) { return isDark(c) ? 0xffeff9f6 : 0xff192a34; }
     static int muted(Context c) { return isDark(c) ? 0xffacbfcc : 0xff526675; }
     static int danger(Context c) { return isDark(c) ? 0xffffb4a8 : 0xffaf4a4d; }
-    static int selected(Context c) { return isDark(c) ? 0xff17342a : 0xffe8f1ef; }
+    static int selected(Context c) {
+        int base = surface(c), tone = accent(c);
+        float blend = isDark(c) ? 0.17f : 0.11f;
+        int r = Math.round(Color.red(base) * (1f-blend) + Color.red(tone) * blend);
+        int g = Math.round(Color.green(base) * (1f-blend) + Color.green(tone) * blend);
+        int b = Math.round(Color.blue(base) * (1f-blend) + Color.blue(tone) * blend);
+        return Color.rgb(r, g, b);
+    }
     static int heroTop(Context c) { return isDark(c) ? 0xff142a37 : 0xffedf4f7; }
     static int heroBottom(Context c) { return isDark(c) ? 0xff0f1b28 : 0xffe6eef3; }
     static int heroPressedTop(Context c) { return isDark(c) ? 0xff1b3348 : 0xffdeedf2; }
