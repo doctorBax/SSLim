@@ -1,6 +1,6 @@
 # Blade route setup for the Wintun adapter. Run elevated.
 # Apply: -InterfaceIndex <n> -ServerIP <ip> -Prefixes "a.b.c.d/1,...,x.y.z.w/32" [-BlockIPv6]
-# Revert: -Revert (removes the IPv6 firewall rule; interface routes die with the adapter)
+# Revert: -Revert (interface routes die with the adapter)
 
 param(
     [int]$InterfaceIndex,
@@ -12,12 +12,13 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$Rule = "Blade IPv6 outbound block"
-
+$LegacyRule = "Blade IPv6 outbound block"
 if ($Revert) {
-    Get-NetFirewallRule -DisplayName $Rule -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue
+    Get-NetFirewallRule -DisplayName $LegacyRule -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue
     exit 0
 }
+
+Get-NetFirewallRule -DisplayName $LegacyRule -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue
 
 if (-not $InterfaceIndex -or -not $ServerIP -or -not $Prefixes) {
     Write-Error "usage: blade-routes.ps1 -InterfaceIndex <n> -ServerIP <ip> -Prefixes <csv> [-BlockIPv6] | -Revert"
@@ -37,8 +38,12 @@ foreach ($prefix in $Prefixes -split ',') {
 Set-DnsClientServerAddress -InterfaceIndex $InterfaceIndex -ServerAddresses @("1.1.1.1", "9.9.9.9")
 
 if ($BlockIPv6) {
-    if (-not (Get-NetFirewallRule -DisplayName $Rule -ErrorAction SilentlyContinue)) {
-        New-NetFirewallRule -DisplayName $Rule -Direction Outbound -Action Block -Protocol Any -RemoteAddress "::/0" -ErrorAction Stop | Out-Null
+    Set-NetIPInterface -InterfaceIndex $InterfaceIndex -AddressFamily IPv6 -AutomaticMetric Disabled -InterfaceMetric 5 -PolicyStore ActiveStore
+    if (-not (Get-NetIPAddress -InterfaceIndex $InterfaceIndex -IPAddress "fd54:253::2" -ErrorAction SilentlyContinue)) {
+        New-NetIPAddress -InterfaceIndex $InterfaceIndex -IPAddress "fd54:253::2" -PrefixLength 128 -PolicyStore ActiveStore -ErrorAction Stop | Out-Null
+    }
+    if (-not (Get-NetRoute -InterfaceIndex $InterfaceIndex -DestinationPrefix "2000::/3" -ErrorAction SilentlyContinue)) {
+        New-NetRoute -DestinationPrefix "2000::/3" -InterfaceIndex $InterfaceIndex -NextHop "::" -RouteMetric 1 -PolicyStore ActiveStore -ErrorAction Stop | Out-Null
     }
 }
 
