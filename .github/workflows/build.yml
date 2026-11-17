@@ -18,6 +18,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --locked
       - run: cargo build --release --locked
+      - name: Verify nested interactive CLI menu (PTY)
+        run: python3 scripts/test-cli-menu.py target/release/sslim
       - name: Verify concurrent Linux tunnels
         run: sudo unshare --net python3 scripts/test-multi-tun.py target/release/sslim
       - run: tar -czf sslim-linux-x86_64.tar.gz -C target/release sslim
