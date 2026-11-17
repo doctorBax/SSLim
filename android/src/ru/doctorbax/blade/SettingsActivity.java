@@ -19,22 +19,42 @@ import android.widget.TextView;
 
 /** Two-level settings: profiles and real application preferences. */
 public final class SettingsActivity extends Activity {
-    private static final int BG = 0xff0b121a;
-    private static final int SURFACE = 0xff111e2a;
-    private static final int BORDER = 0xff263746;
-    private static final int WHITE = 0xffeff9f6;
-    private static final int MUTED = 0xffacbfcc;
-    private static final int MINT = 0xffb7f4cd;
+    private int BG;
+    private int SURFACE;
+    private int BORDER;
+    private int WHITE;
+    private int MUTED;
+    private int MINT;
+    private String appearanceStamp;
+
+    private void loadPalette() {
+        BG = BladeAppearance.background(this);
+        SURFACE = BladeAppearance.surface(this);
+        BORDER = BladeAppearance.border(this);
+        WHITE = BladeAppearance.text(this);
+        MUTED = BladeAppearance.muted(this);
+        MINT = BladeAppearance.accent(this);
+        appearanceStamp = BladeAppearance.stamp(this);
+    }
     private static final Typeface BOLD = Typeface.create("sans-serif-medium", Typeface.NORMAL);
     private boolean showingOptions;
 
     @Override public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         if (Build.VERSION.SDK_INT >= 30) getWindow().setDecorFitsSystemWindows(false);
-        getWindow().setStatusBarColor(BG);
-        getWindow().setNavigationBarColor(BG);
+        loadPalette();
+        BladeAppearance.applyWindow(this);
         showingOptions = savedInstanceState != null && savedInstanceState.getBoolean("options");
         render();
+    }
+
+    @Override protected void onResume() {
+        super.onResume();
+        if (!BladeAppearance.stamp(this).equals(appearanceStamp)) {
+            loadPalette();
+            BladeAppearance.applyWindow(this);
+            render();
+        }
     }
 
     @Override protected void onSaveInstanceState(Bundle out) {
@@ -122,6 +142,9 @@ public final class SettingsActivity extends Activity {
                     showingOptions = true;
                     render();
                 }), 12);
+            add(content, item("Оформление",
+                "Цветовые темы, акценты, анимации и интерактивный предпросмотр",
+                () -> startActivity(new Intent(this, AppearanceActivity.class))), 12);
         } else {
             add(content, text("СОЕДИНЕНИЕ", 12, MINT, true), 20);
             add(content, toggle("Автоматически переподключаться",
@@ -148,6 +171,11 @@ public final class SettingsActivity extends Activity {
                 "Показывать BladePerf в logcat для поиска проблем со скоростью",
                 BladeOptions.diagnostics(this),
                 checked -> BladeOptions.setDiagnostics(this, checked)), 10);
+
+            add(content, text("ОБНОВЛЕНИЯ", 12, MINT, true), 24);
+            add(content, item("Проверить обновления",
+                "Только по нажатию · GitHub Releases · без автозагрузки APK",
+                () -> BladeUpdates.check(this)), 10);
         }
     }
 
@@ -176,6 +204,7 @@ public final class SettingsActivity extends Activity {
         add(words, text(subtitle, 12, MUTED, false), 5);
         row.addView(words, new LinearLayout.LayoutParams(0, -2, 1f));
         Switch control = new Switch(this);
+        control.setThumbTintList(android.content.res.ColorStateList.valueOf(MINT));
         control.setContentDescription(title);
         control.setChecked(current);
         control.setOnCheckedChangeListener((button, checked) -> action.changed(checked));
