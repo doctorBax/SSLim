@@ -23,13 +23,23 @@ import java.util.Base64;
 
 /** Create or edit one server profile. Every field is user-editable. */
 public final class ProfileEditorActivity extends Activity {
-    private static final int BACKGROUND = 0xff0b121a;
-    private static final int SURFACE = 0xff111e2a;
-    private static final int BORDER = 0xff263746;
-    private static final int WHITE = 0xffeff9f6;
-    private static final int MUTED = 0xffacbfcc;
-    private static final int MINT = 0xffb7f4cd;
-    private static final int CORAL = 0xffffb4a8;
+    private int BACKGROUND;
+    private int SURFACE;
+    private int BORDER;
+    private int WHITE;
+    private int MUTED;
+    private int MINT;
+    private int CORAL;
+
+    private void loadPalette() {
+        BACKGROUND = BladeAppearance.background(this);
+        SURFACE = BladeAppearance.surface(this);
+        BORDER = BladeAppearance.border(this);
+        WHITE = BladeAppearance.text(this);
+        MUTED = BladeAppearance.muted(this);
+        MINT = BladeAppearance.accent(this);
+        CORAL = BladeAppearance.danger(this);
+    }
     private static final Typeface MEDIUM = Typeface.create("sans-serif-medium", Typeface.NORMAL);
     private static final Typeface BOLD = Typeface.create("sans-serif", Typeface.BOLD);
 
@@ -47,8 +57,8 @@ public final class ProfileEditorActivity extends Activity {
     @Override public void onCreate(Bundle savedState) {
         super.onCreate(savedState);
         if (Build.VERSION.SDK_INT >= 30) getWindow().setDecorFitsSystemWindows(false);
-        getWindow().setStatusBarColor(BACKGROUND);
-        getWindow().setNavigationBarColor(BACKGROUND);
+        loadPalette();
+        BladeAppearance.applyWindow(this);
 
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
