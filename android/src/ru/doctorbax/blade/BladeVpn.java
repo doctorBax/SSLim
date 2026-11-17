@@ -30,6 +30,8 @@ import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
 import java.security.SecureRandom;
 import java.security.cert.CertificateFactory;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
@@ -53,6 +55,10 @@ public final class BladeVpn extends VpnService {
     private static final int RECONNECT_MAX_MS = 30_000;
     private static final int MTU = 1280;
     private static final int TUN_POLL_MS = 250;
+    private static final int TUN_QUEUE_CAPACITY = 64;
+    private static final int MAX_BATCH_PACKETS = 32;
+    private static final int MAX_BATCH_BYTES = 32 * 1024;
+    private static final long PERF_REPORT_MS = 10_000;
     private static final byte[] PING_FRAME = {2, 0, 0};
     private static final byte[] PONG_FRAME = {3, 0, 0};
     private static final byte[] CLOSE_FRAME = {4, 0, 0};
@@ -63,6 +69,18 @@ public final class BladeVpn extends VpnService {
         final AtomicLong pingStarted = new AtomicLong();
         volatile long rttMs = -1;
         volatile long rttSampleTime;
+        final AtomicLong uplinkPackets = new AtomicLong();
+        final AtomicLong uplinkBatches = new AtomicLong();
+        final AtomicLong tlsSlowWrites = new AtomicLong();
+        final AtomicLong tunBackpressure = new AtomicLong();
+        final AtomicLong tunWaitMs = new AtomicLong();
+        final AtomicLong tunQueuePeak = new AtomicLong();
+    }
+
+    /** Fixed-size reusable buffers: bound memory even if Android TUN stalls. */
+    private static final class PacketSlot {
+        final byte[] data = new byte[MTU];
+        int size;
     }
 
     static volatile Traffic traffic = new Traffic();
@@ -269,12 +287,19 @@ public final class BladeVpn extends VpnService {
                     status = "VPN подключён";
                 }
                 phase = "передача данных";
+                // Decouple network reads from potentially blocking Android TUN writes.
+                // The two bounded queues also provide explicit backpressure with no
+                // per-packet allocations on the downlink hot path.
+                final ArrayBlockingQueue<PacketSlot> empty = new ArrayBlockingQueue<>(TUN_QUEUE_CAPACITY);
+                final ArrayBlockingQueue<PacketSlot> pending = new ArrayBlockingQueue<>(TUN_QUEUE_CAPACITY);
+                for (int i = 0; i < TUN_QUEUE_CAPACITY; i++) empty.add(new PacketSlot());
                 Thread sender = new Thread(() -> sendPackets(device, output, counters), "blade-vpn-uplink");
+                Thread receiver = new Thread(() -> receivePackets(device, pending, empty, counters),
+                    "blade-vpn-tun-writer");
+                receiver.start();
                 sender.start();
-                byte[] packet = new byte[MTU];
-                StructPollfd writable = pollFd(device.getFileDescriptor(), OsConstants.POLLOUT);
                 try {
-                    while (true) {
+                    while (!stopping) {
                         int type = input.readUnsignedByte();
                         int size = input.readUnsignedShort();
                         if (type == 4 && size == 0) break;
@@ -298,14 +323,31 @@ public final class BladeVpn extends VpnService {
                         if (type != 1 || size < 20 || size > MTU) {
                             throw new IOException("Invalid frame");
                         }
-                        input.readFully(packet, 0, size);
-                        if ((packet[0] >>> 4 & 15) != 4) continue;
-                        if (writePacket(writable, packet, size)) counters.download.addAndGet(size);
+                        PacketSlot slot = null;
+                        try {
+                            while (!stopping && (slot = empty.poll(TUN_POLL_MS, TimeUnit.MILLISECONDS)) == null) {
+                                if (!receiver.isAlive()) throw new IOException("TUN writer exited");
+                            }
+                            if (stopping) break;
+                            input.readFully(slot.data, 0, size);
+                            if ((slot.data[0] >>> 4 & 15) != 4) continue;
+                            slot.size = size;
+                            while (!stopping && !pending.offer(slot, TUN_POLL_MS, TimeUnit.MILLISECONDS)) {
+                                if (!receiver.isAlive()) throw new IOException("TUN writer exited");
+                            }
+                            if (stopping) break;
+                            counters.tunQueuePeak.accumulateAndGet(pending.size(), Math::max);
+                            slot = null; // ownership transferred to TUN writer
+                        } finally {
+                            if (slot != null) empty.offer(slot);
+                        }
                     }
                 } finally {
                     try { raw.close(); } catch (IOException ignored) {}
                     sender.interrupt();
+                    receiver.interrupt();
                     sender.join(500);
+                    receiver.join(500);
                 }
                 if (!stopping) status = "Сервер закрыл соединение";
             }
@@ -332,11 +374,13 @@ public final class BladeVpn extends VpnService {
         if ((descriptor.revents & closed) != 0) throw new IOException("TUN closed");
     }
 
+    /** Read all immediately available TUN packets into one TLS write. */
     private void sendPackets(ParcelFileDescriptor device, DataOutputStream output, Traffic counters) {
-        byte[] frame = new byte[MTU + 3];
+        byte[] batch = new byte[MAX_BATCH_PACKETS * (MTU + 3)];
         StructPollfd readable = pollFd(device.getFileDescriptor(), OsConstants.POLLIN);
         StructPollfd[] waitSet = {readable};
         long nextPing = SystemClock.elapsedRealtime();
+        long nextReport = nextPing + PERF_REPORT_MS;
         try {
             while (!stopping && !Thread.currentThread().isInterrupted()) {
                 long now = SystemClock.elapsedRealtime();
@@ -348,33 +392,90 @@ public final class BladeVpn extends VpnService {
                     }
                     nextPing = now + 3000;
                 }
-                int length;
-                try {
-                    length = Os.read(readable.fd, frame, 3, MTU);
-                } catch (ErrnoException error) {
-                    if (error.errno == OsConstants.EINTR) continue;
-                    if (error.errno != OsConstants.EAGAIN) throw error;
-                    waitFor(readable, waitSet);
-                    continue;
+                if (now >= nextReport) {
+                    Log.i("BladePerf", "up_bytes=" + counters.upload.get()
+                        + " down_bytes=" + counters.download.get()
+                        + " up_packets=" + counters.uplinkPackets.get()
+                        + " up_batches=" + counters.uplinkBatches.get()
+                        + " slow_tls_writes=" + counters.tlsSlowWrites.get()
+                        + " tun_eagain=" + counters.tunBackpressure.get()
+                        + " tun_wait_ms=" + counters.tunWaitMs.get()
+                        + " tun_queue_peak=" + counters.tunQueuePeak.get());
+                    nextReport = now + PERF_REPORT_MS;
                 }
-                if (length <= 0) throw new IOException("TUN closed");
+
+                int bytes = 0;
+                int packets = 0;
+                int payloadBytes = 0;
+                while (packets < MAX_BATCH_PACKETS && bytes < MAX_BATCH_BYTES) {
+                    try {
+                        int length = Os.read(readable.fd, batch, bytes + 3, MTU);
+                        if (length <= 0) throw new IOException("TUN closed");
+                        batch[bytes] = 1;
+                        batch[bytes + 1] = (byte) (length >>> 8);
+                        batch[bytes + 2] = (byte) length;
+                        bytes += length + 3;
+                        payloadBytes += length;
+                        packets++;
+                    } catch (ErrnoException error) {
+                        if (error.errno == OsConstants.EINTR) continue;
+                        if (error.errno != OsConstants.EAGAIN) throw error;
+                        if (packets == 0) waitFor(readable, waitSet);
+                        break; // flush without waiting for more packets
+                    }
+                }
+                if (packets == 0) continue;
+                long started = SystemClock.elapsedRealtimeNanos();
                 synchronized (output) {
                     if (stopping) return;
-                    frame[0] = 1;
-                    frame[1] = (byte) (length >>> 8);
-                    frame[2] = (byte) length;
-                    output.write(frame, 0, length + 3);
+                    output.write(batch, 0, bytes);
                     output.flush();
                 }
-                counters.upload.addAndGet(length);
+                if (SystemClock.elapsedRealtimeNanos() - started > 20_000_000L) {
+                    counters.tlsSlowWrites.incrementAndGet();
+                }
+                counters.upload.addAndGet(payloadBytes);
+                counters.uplinkPackets.addAndGet(packets);
+                counters.uplinkBatches.incrementAndGet();
             }
         } catch (Exception error) {
-            if (!stopping) closeResources();
+            if (!stopping) {
+                Log.e("Blade", "Uplink failed", error);
+                closeResources();
+            }
         }
     }
 
-    private boolean writePacket(StructPollfd writable, byte[] packet, int length) throws Exception {
-        while (!stopping) {
+    /** Consume inbound packets independently of the TLS read loop. */
+    private void receivePackets(ParcelFileDescriptor device,
+                                ArrayBlockingQueue<PacketSlot> pending,
+                                ArrayBlockingQueue<PacketSlot> empty,
+                                Traffic counters) {
+        StructPollfd writable = pollFd(device.getFileDescriptor(), OsConstants.POLLOUT);
+        StructPollfd[] waitSet = {writable};
+        try {
+            while (!stopping && !Thread.currentThread().isInterrupted()) {
+                PacketSlot slot = pending.poll(TUN_POLL_MS, TimeUnit.MILLISECONDS);
+                if (slot == null) continue;
+                try {
+                    if (writePacket(writable, waitSet, slot.data, slot.size, counters)) {
+                        counters.download.addAndGet(slot.size);
+                    }
+                } finally {
+                    empty.offer(slot);
+                }
+            }
+        } catch (Exception error) {
+            if (!stopping) {
+                Log.e("Blade", "Downlink TUN writer failed", error);
+                closeResources();
+            }
+        }
+    }
+
+    private boolean writePacket(StructPollfd writable, StructPollfd[] waitSet,
+                                byte[] packet, int length, Traffic counters) throws Exception {
+        while (!stopping && !Thread.currentThread().isInterrupted()) {
             try {
                 if (Os.write(writable.fd, packet, 0, length) != length) {
                     throw new IOException("Partial TUN write");
@@ -383,7 +484,10 @@ public final class BladeVpn extends VpnService {
             } catch (ErrnoException error) {
                 if (error.errno == OsConstants.EINTR) continue;
                 if (error.errno != OsConstants.EAGAIN) throw error;
-                waitFor(writable, new StructPollfd[]{writable});
+                counters.tunBackpressure.incrementAndGet();
+                long start = SystemClock.elapsedRealtime();
+                waitFor(writable, waitSet);
+                counters.tunWaitMs.addAndGet(SystemClock.elapsedRealtime() - start);
             }
         }
         return false;
