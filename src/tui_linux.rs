@@ -138,7 +138,7 @@ async fn connect_profile() -> Result<()> {
     let Some(profile) = choose_profile()? else { return Ok(()); };
     let tun_name = prompt("Имя уже настроенного TUN", "labtun0")?;
     profile::set_last(&profile.name)?;
-    let key = profile.secret()?;
+    let key = crate::auth::key_from_bytes(&profile.secret()?);
     let tls = tls_for_profile(&profile)?;
     let tun = Tun::open(&tun_name)?;
     println!("Соединение {}:{}. Ctrl+C — завершить.", profile.host, profile.port);
