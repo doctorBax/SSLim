@@ -82,6 +82,7 @@ cat > /usr/local/bin/sslim-client <<'EOF'
 set -eu
 dir=/etc/sslim
 case "${1:-}" in
+  "") exec sslim ;;
   add|link|rotate)
        [ "$#" -eq 2 ] || { echo "Usage: sslim-client $1 NAME" >&2; exit 2; }
        action=$1
