@@ -32,13 +32,6 @@ final class BladeAppearance {
         c.getSharedPreferences("blade-appearance", 0).edit().putString("mode", mode).apply();
     }
 
-    static boolean dark(Context c) {
-        if (DARK.equals(mode(c))) return true;
-        if (LIGHT.equals(mode(c))) return false;
-        return (c.getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK)
-            != Configuration.UI_MODE_NIGHT_YES;
-    }
-
     static boolean isDark(Context c) {
         if (DARK.equals(mode(c))) return true;
         if (LIGHT.equals(mode(c))) return false;
@@ -78,14 +71,7 @@ final class BladeAppearance {
             case CUSTOM: color = customColor(c); break;
             default: color = dark ? 0xffb7f4cd : 0xff247d5e;
         }
-        if (CUSTOM.equals(accentName(c))) {
-            float[] hsv = new float[3];
-            Color.colorToHSV(color, hsv);
-            hsv[1] = Math.max(0.36f, hsv[1]);
-            if (dark) hsv[2] = Math.max(hsv[2], 0.68f);
-            else hsv[2] = Math.min(hsv[2], 0.58f);
-            color = Color.HSVToColor(hsv);
-        }
+        // Custom HEX is respected exactly; onAccent chooses readable arrow ink.
         return color;
     }
 
