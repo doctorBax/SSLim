@@ -38,12 +38,15 @@ foreach ($prefix in $Prefixes -split ',') {
 Set-DnsClientServerAddress -InterfaceIndex $InterfaceIndex -ServerAddresses @("1.1.1.1", "9.9.9.9")
 
 if ($BlockIPv6) {
-    Set-NetIPInterface -InterfaceIndex $InterfaceIndex -AddressFamily IPv6 -AutomaticMetric Disabled -InterfaceMetric 5 -PolicyStore ActiveStore
-    if (-not (Get-NetIPAddress -InterfaceIndex $InterfaceIndex -IPAddress "fd54:253::2" -ErrorAction SilentlyContinue)) {
-        New-NetIPAddress -InterfaceIndex $InterfaceIndex -IPAddress "fd54:253::2" -PrefixLength 128 -PolicyStore ActiveStore -ErrorAction Stop | Out-Null
-    }
-    if (-not (Get-NetRoute -InterfaceIndex $InterfaceIndex -DestinationPrefix "2000::/3" -ErrorAction SilentlyContinue)) {
-        New-NetRoute -DestinationPrefix "2000::/3" -InterfaceIndex $InterfaceIndex -NextHop "::" -RouteMetric 1 -PolicyStore ActiveStore -ErrorAction Stop | Out-Null
+    $ipv6 = Get-NetIPInterface -InterfaceIndex $InterfaceIndex -AddressFamily IPv6 -ErrorAction SilentlyContinue
+    if ($ipv6) {
+        Set-NetIPInterface -InterfaceIndex $InterfaceIndex -AddressFamily IPv6 -AutomaticMetric Disabled -InterfaceMetric 5 -PolicyStore ActiveStore
+        if (-not (Get-NetIPAddress -InterfaceIndex $InterfaceIndex -IPAddress "fd54:253::2" -ErrorAction SilentlyContinue)) {
+            New-NetIPAddress -InterfaceIndex $InterfaceIndex -IPAddress "fd54:253::2" -PrefixLength 128 -PolicyStore ActiveStore -ErrorAction Stop | Out-Null
+        }
+        if (-not (Get-NetRoute -InterfaceIndex $InterfaceIndex -DestinationPrefix "2000::/3" -ErrorAction SilentlyContinue)) {
+            New-NetRoute -DestinationPrefix "2000::/3" -InterfaceIndex $InterfaceIndex -NextHop "::" -RouteMetric 1 -PolicyStore ActiveStore -ErrorAction Stop | Out-Null
+        }
     }
 }
 
