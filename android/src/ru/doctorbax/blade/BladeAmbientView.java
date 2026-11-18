@@ -19,7 +19,8 @@ final class BladeAmbientView extends View {
 
     BladeAmbientView(Context context) {
         super(context);
-        setLayerType(View.LAYER_TYPE_HARDWARE, null);
+        // Android's normal hardware-accelerated canvas is enough; an extra
+        // persistent hardware layer would waste memory for each menu.
     }
 
     private float dp(float value) {
