@@ -145,6 +145,10 @@ public final class ProfilesActivity extends Activity {
         BladeMotion.enter(content);
     }
 
+    @Override public void onBackPressed() {
+        BladeMotion.finish(this);
+    }
+
     @Override protected void onResume() {
         super.onResume();
         render();
