@@ -40,6 +40,8 @@ async fn manual_server() -> Result<()> {
         "--tun-name", &tun, "--multi-tun"]);
     let cc = prompt("TCP congestion control (Enter — системный)", "")?;
     if !cc.is_empty() { args.extend(argv(&["--congestion-control", &cc])); }
+    let udp = prompt("UDP порт QUIC v3 (пусто — выключен; обычно тот же порт, что TCP)", "")?;
+    if !udp.is_empty() { args.extend(argv(&["--udp-port", &udp])); }
     invoke(args).await
 }
 
