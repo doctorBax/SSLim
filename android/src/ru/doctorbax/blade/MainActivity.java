@@ -108,7 +108,7 @@ public final class MainActivity extends Activity {
         TextView name = label("Blade", 20, WHITE, BOLD);
         header.addView(name, new LinearLayout.LayoutParams(0, -2, 1f));
         ImageView gear = iconButton(R.drawable.ic_gear, 40, MINT, SURFACE, 12);
-        gear.setOnClickListener(view -> openSettings());
+        BladeMotion.bind(gear, this::openSettings);
         gear.setContentDescription("Настройки");
         header.addView(gear, new LinearLayout.LayoutParams(dp(40), dp(40)));
         add(content, header, 0);
@@ -127,6 +127,7 @@ public final class MainActivity extends Activity {
         heroPanel.setBackground(new RippleDrawable(
             ColorStateList.valueOf(MINT & 0x40ffffff), panel, pressed));
         heroPanel.setClickable(true);
+        BladeMotion.touch(heroPanel);
         heroPanel.setOnClickListener(view -> {
             BladeAppearance.haptic(view);
             toggleConnection();
@@ -175,11 +176,12 @@ public final class MainActivity extends Activity {
         profileCard.setBackground(surface(SURFACE, 18, BORDER));
         profileCard.setClickable(true);
         profileCard.setForeground(new RippleDrawable(
-            ColorStateList.valueOf(0x30ffffff), null, surface(SURFACE, 18, 0)));
+            ColorStateList.valueOf((MINT & 0x00ffffff) | 0x28000000),
+            null, surface(SURFACE, 18, 0)));
         profileCard.setContentDescription("Профиль сервера. Открыть настройки");
-        profileCard.setOnClickListener(view -> {
-            BladeAppearance.haptic(view);
+        BladeMotion.bind(profileCard, () -> {
             startActivityForResult(new Intent(this, ProfilesActivity.class), REQUEST_SETTINGS);
+            BladeMotion.transition(this);
         });
         LinearLayout profileText = column();
         profileText.addView(label("СЕРВЕР", 10, MUTED, MEDIUM));
@@ -192,10 +194,11 @@ public final class MainActivity extends Activity {
         profileCard.addView(activeProfileAction);
         add(content, profileCard, 12);
 
-        setContentView(scroll);
+        BladeMotion.mount(this, scroll);
         handleIncomingIntent(getIntent());
         renderProfile();
         renderStatus();
+        BladeMotion.enter(content);
     }
 
     @Override protected void onNewIntent(Intent intent) {
@@ -272,6 +275,7 @@ public final class MainActivity extends Activity {
         String status = BladeVpn.status;
         boolean running = BladeVpn.running;
         if (status.equals(shownStatus) && running == shownRunning) return;
+        boolean animateStatus = shownStatus != null;
         shownStatus = status;
         shownRunning = running;
 
@@ -296,6 +300,10 @@ public final class MainActivity extends Activity {
             "Нажмите на стрелку, чтобы включить туннель.");
 
         hero.setState(connected, starting || stopping || running);
+        if (animateStatus) {
+            BladeMotion.state(chip);
+            BladeMotion.state(headline);
+        }
     }
 
     private void renderProfile() {
@@ -313,6 +321,7 @@ public final class MainActivity extends Activity {
 
     private void openSettings() {
         startActivityForResult(new Intent(this, SettingsActivity.class), REQUEST_SETTINGS);
+        BladeMotion.transition(this);
     }
 
     private void toggleConnection() {
@@ -323,6 +332,7 @@ public final class MainActivity extends Activity {
         if (ProfileStore.active(this) == null) {
             toast("Сначала добавьте профиль сервера в настройках");
             startActivityForResult(new Intent(this, ProfilesActivity.class), REQUEST_SETTINGS);
+            BladeMotion.transition(this);
             return;
         }
         Intent permission = VpnService.prepare(this);
