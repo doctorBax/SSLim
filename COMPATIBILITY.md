@@ -20,6 +20,13 @@ unchanged. A link may contain `u=lab-packet/1` to select a historical TCP
 marker and `ca=` for the base64-encoded PEM trust certificate. When sharing a
 profile, Android Blade must retain **both** fields, not only host and key.
 
+Android display labels may contain Cyrillic text and spaces. The Android
+exporter percent-encodes the `n=` label for valid URIs. Android restores the
+display name on import; Linux/Windows instead use the host as a safe local
+profile name when that encoded label is not a valid filename, without changing
+the server, secret, CA or TCP marker.
+
+
 ## UDP / QUIC is a different compatibility axis
 
 - Experimental QUIC v2 (`sslim/2`) remains a separate listener using
