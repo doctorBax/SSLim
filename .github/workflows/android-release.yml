@@ -11,7 +11,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: publish-sslim-v0.6.0
+  group: publish-sslim-v0.6.1
   cancel-in-progress: false
 
 jobs:
@@ -25,13 +25,13 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha }}
           persist-credentials: false
 
-      - name: Validate 0.6.0 release versions
+      - name: Validate 0.6.1 release versions
         shell: bash
         run: |
           set -euo pipefail
-          grep -Fxq 'version = "0.6.0"' Cargo.toml
-          grep -Fq 'android:versionName="0.6.0"' android/AndroidManifest.xml
-          grep -Fxq 'version = "0.6.0"' android/native/Cargo.toml
+          grep -Fxq 'version = "0.6.1"' Cargo.toml
+          grep -Fq 'android:versionName="0.6.1"' android/AndroidManifest.xml
+          grep -Fxq 'version = "0.6.1"' android/native/Cargo.toml
 
       - name: Retrieve platform builds from the successful main CI run
         shell: bash
@@ -57,28 +57,36 @@ jobs:
         shell: bash
         run: |
           cat > dist/RELEASE_NOTES.md <<'NOTES'
-          ## SSLim 0.6.0 — Android, Linux and Windows
+          ## SSLim 0.6.1 — Automatic TCP / QUIC v3 server setup
 
-          ### Android Blade
-          - System, dark and light themes; Blade Mint, Arctic Blue, Soft Lavender, Warm Amber and custom HSV/HEX accents.
-          - Orbit, Aurora, Data Stream, Spectrum and Crystal animation styles with coordinated menu effects, motion and haptics.
-          - Round/square connection button, interactive preview, redesigned profiles and settings.
-          - Manual-only GitHub Releases update checker; no automatic download or install.
-          - Android system Always-on VPN and "Block connections without VPN" kill switch settings guide.
-          - Experimental UDP/QUIC v3 transport: Auto / TCP / QUIC selection, encrypted datagrams and optional TCP fallback only for UDP unavailability.
+          This patch release improves compatibility and server administration
+          without changing the established TCP v1 protocol or profile format.
 
-          ### Linux and Windows
-          - Bare `sslim` opens interactive nested menus with arrows, Enter and numeric fallback; existing subcommands remain script-compatible.
-          - Improved client profile management, QR links, manual version checking, and server administration.
-          - Linux opt-in UDP listener: `--udp-port 9443` alongside unchanged TCP v1. UDP requires firewall allowance and a new 0.6.0 Linux server; the old standalone QUIC v2 remains separate.
-          - Shared TCP/QUIC authentication and isolated peer TUN addresses.
+          ### Fixed server transport experience
+          - Linux menu: **Server and service → Auto transport TCP + QUIC v3**.
+          - Set up UDP/QUIC v3 on the **same port as the current TCP listener**;
+            preserve all existing client keys, certificates, addresses and unit flags.
+          - Before changing systemd settings, save a private backup of the existing
+            unit; automatically roll back if the changed service fails to start.
+          - Preserve custom UDP port configurations instead of silently changing them.
+          - New standard server installations enable TCP and UDP/QUIC v3 together
+            on port 9443; upgrades intentionally preserve the old service settings,
+            and UDP can then be enabled via the interactive Linux menu.
+          - The separate experimental QUIC v2 interface is clearly marked
+            **Legacy / not for Android Blade**.
 
-          ### Compatibility and cautions
-          - Existing `sslim://` profiles, certificate paths and clients.txt keyring are preserved.
-          - The Android UDP feature is experimental; real-device networking, failover and performance may vary.
-          - When upgrading a Linux server installed via install-server.sh, back up `/etc/sslim` and the systemd unit. The updated installer keeps existing network/service configuration on upgrade, and therefore does not enable UDP by itself.
-          - Android APK update-in-place may fail if the signing key differs from your installed APK. Back up profiles before uninstalling the previous version.
-          - UDP/QUIC changes apply only to v3 and opt-in server mode; old TCP behavior remains supported.
+          ### Platforms and compatibility
+          - Linux CLI/server, Windows CLI and Android Blade 0.6.1 packages are included.
+          - Old TCP v1 clients and sslim:// profiles stay compatible.
+          - The Android Auto mode tries authenticated QUIC v3 first and falls
+            back to TCP only if UDP is unavailable; authentication failures
+            do not trigger a downgrade.
+          - UDP needs the matching server option and an open firewall port.
+          - UDP/QUIC v3 remains experimental; validate real-device connectivity,
+            network transitions and VPN performance before wide deployment.
+          - Back up /etc/sslim and the systemd unit before Linux upgrades.
+            As with previous releases, a different Android APK signing key
+            may prevent an in-place update, so back up Android profiles too.
           NOTES
 
       - name: Publish tag and all three packages
@@ -88,7 +96,7 @@ jobs:
           COMMIT_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           set -euo pipefail
-          tag=v0.6.0
+          tag=v0.6.1
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "Release $tag already exists; leaving the published assets unchanged."
             exit 0
@@ -100,5 +108,5 @@ jobs:
             dist/SHA256SUMS \
             --target "$COMMIT_SHA" \
             --repo "$GITHUB_REPOSITORY" \
-            --title "SSLim v0.6.0 — Blade, interactive CLI and QUIC v3" \
+            --title "SSLim v0.6.1 — Auto TCP / QUIC v3 compatibility fix" \
             --notes-file dist/RELEASE_NOTES.md
