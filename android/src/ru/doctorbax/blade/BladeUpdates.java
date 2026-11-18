@@ -14,6 +14,7 @@ import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -27,12 +28,14 @@ final class BladeUpdates {
     private BladeUpdates() {}
 
     static void check(Activity activity) {
-        final AlertDialog progress = new AlertDialog.Builder(activity)
+        AtomicBoolean cancelled = new AtomicBoolean(false);
+        final AlertDialog progress = BladeMotion.builder(activity)
             .setTitle("Проверка обновлений")
             .setMessage("Проверяем последнюю версию Blade на GitHub…")
-            .setNegativeButton("Отмена", (d, which) -> {})
+            .setNegativeButton("Отмена", (d, which) -> cancelled.set(true))
             .create();
-        progress.show();
+        progress.setOnCancelListener(d -> cancelled.set(true));
+        BladeMotion.show(progress);
         new Thread(() -> {
             try {
                 JSONObject release = latestRelease();
@@ -53,24 +56,24 @@ final class BladeUpdates {
                 int comparison = compareVersions(tag, local);
                 activity.runOnUiThread(() -> {
                     progress.dismiss();
-                    if (activity.isFinishing() || activity.isDestroyed()) return;
+                    if (activity.isFinishing() || activity.isDestroyed() || cancelled.get()) return;
                     if (comparison <= 0) {
-                        new AlertDialog.Builder(activity)
+                        BladeMotion.show(BladeMotion.builder(activity)
                             .setTitle("Обновлений нет")
                             .setMessage("Установлена: " + local
                                 + "\nПоследний релиз: " + tag
                                 + "\n\nНовые версии проверяются только вручную.")
-                            .setPositiveButton("Понятно", null).show();
+                            .setPositiveButton("Понятно", null).create());
                     } else if (!hasApk) {
-                        new AlertDialog.Builder(activity)
+                        BladeMotion.show(BladeMotion.builder(activity)
                             .setTitle("Найден новый релиз")
                             .setMessage("Версия " + tag + " опубликована, но Android APK "
                                 + "в составе релиза не найден.")
-                            .setPositiveButton("Понятно",null).show();
+                            .setPositiveButton("Понятно",null).create());
                     } else {
                         String notes = body.length() > 1600
                             ? body.substring(0,1600) + "…" : body;
-                        new AlertDialog.Builder(activity)
+                        BladeMotion.show(BladeMotion.builder(activity)
                             .setTitle("Доступна версия " + tag)
                             .setMessage("Установлена: " + local
                                 + "\n\n" + notes
@@ -78,19 +81,19 @@ final class BladeUpdates {
                             .setPositiveButton("Открыть релиз", (d, which) -> {
                                 activity.startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
                             })
-                            .setNegativeButton("Позже", null).show();
+                            .setNegativeButton("Позже", null).create());
                     }
                 });
             } catch (Exception error) {
                 activity.runOnUiThread(() -> {
                     progress.dismiss();
-                    if (activity.isFinishing() || activity.isDestroyed()) return;
-                    new AlertDialog.Builder(activity)
+                    if (activity.isFinishing() || activity.isDestroyed() || cancelled.get()) return;
+                    BladeMotion.show(BladeMotion.builder(activity)
                         .setTitle("Не удалось проверить обновления")
                         .setMessage("Нет ответа от GitHub или неверный формат релиза.\n\n"
                             + error.getClass().getSimpleName()
                             + (error.getMessage() == null ? "" : ": " + error.getMessage()))
-                        .setPositiveButton("Закрыть", null).show();
+                        .setPositiveButton("Закрыть", null).create());
                 });
             }
         }, "blade-check-updates").start();
