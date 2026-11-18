@@ -54,13 +54,29 @@ public final class ProfileStore {
                 .append("?sni=").append(serverName)
                 .append("&k=").append(Base64.getEncoder().encodeToString(secret))
                 .append("&u=").append(marker)
-                .append("&n=").append(name);
+                .append("&n=").append(encodeUriComponent(name));
             if (caPem != null && !caPem.isEmpty()) {
                 link.append("&ca=").append(Base64.getEncoder().encodeToString(
                     caPem.getBytes(StandardCharsets.UTF_8)));
             }
             return link.toString();
         }
+    }
+
+    /** Encode user-editable labels without changing existing ASCII profile links. */
+    private static String encodeUriComponent(String value) {
+        final char[] hex = "0123456789ABCDEF".toCharArray();
+        StringBuilder result = new StringBuilder();
+        for (byte octet : value.getBytes(StandardCharsets.UTF_8)) {
+            int b = octet & 255;
+            if ((b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z')
+                || (b >= '0' && b <= '9') || b == '-' || b == '_' || b == '.' || b == '~') {
+                result.append((char) b);
+            } else {
+                result.append('%').append(hex[b >>> 4]).append(hex[b & 15]);
+            }
+        }
+        return result.toString();
     }
 
     private static final String FILE = "profiles.json";
