@@ -73,6 +73,17 @@ enum Action {
         #[arg(long)]
         secret_file: PathBuf,
     },
+    /// Verify v3 authentication, dynamic IPv4 allocation and ICMP echo
+    ProbeV3 {
+        #[arg(long)]
+        address: SocketAddr,
+        #[arg(long)]
+        server_name: String,
+        #[arg(long)]
+        ca: Option<PathBuf>,
+        #[arg(long)]
+        secret_file: PathBuf,
+    },
 }
 
 fn transport() -> Arc<TransportConfig> {
@@ -363,7 +374,81 @@ pub async fn run(args: Args) -> Result<()> {
             endpoint.wait_idle().await;
             Ok(())
         }
+        Action::ProbeV3 {
+            address,
+            server_name,
+            ca,
+            secret_file,
+        } => probe_v3(address, &server_name, ca.as_deref(), &secret_file).await,
     }
+}
+
+fn checksum(bytes: &[u8]) -> [u8; 2] {
+    let mut sum = 0u32;
+    for chunk in bytes.chunks(2) {
+        sum += u32::from(chunk[0]) << 8
+            | u32::from(*chunk.get(1).unwrap_or(&0));
+    }
+    while sum >> 16 != 0 { sum = (sum & 0xffff) + (sum >> 16); }
+    (!(sum as u16)).to_be_bytes()
+}
+
+/// QUIC v3 integration probe. Used by the Linux network namespace smoke
+/// test to verify the full transport, not merely that UDP can bind.
+async fn probe_v3(
+    address: SocketAddr,
+    server_name: &str,
+    ca: Option<&std::path::Path>,
+    secret_file: &std::path::Path,
+) -> Result<()> {
+    let key = read_key(secret_file)?;
+    let mut tls = client_config(ca)?;
+    tls.alpn_protocols = vec![ALPN_V3.to_vec()];
+    let mut config = quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(tls)?));
+    config.transport_config(transport());
+    let bind = if address.is_ipv4() { "0.0.0.0:0" } else { "[::]:0" };
+    let mut endpoint = Endpoint::client(bind.parse()?)?;
+    endpoint.set_default_client_config(config);
+    let conn = timeout(OPERATION_TIMEOUT, endpoint.connect(address, server_name)?).await??;
+    let mut material = [0u8; 32];
+    conn.export_keying_material(&mut material, AUTH_LABEL_V3, ALPN_V3)
+        .map_err(|_| anyhow::anyhow!("QUIC v3 exporter unavailable"))?;
+    let proof = hmac::sign(&key, &material);
+    let (mut writer, mut reader) = timeout(OPERATION_TIMEOUT, conn.open_bi()).await??;
+    writer.write_all(proof.as_ref()).await?;
+    writer.finish()?;
+    let mut response = [0u8; 5];
+    timeout(OPERATION_TIMEOUT, reader.read_exact(&mut response)).await??;
+    ensure!(response[0] == 1, "QUIC v3 authentication rejected");
+    let assigned = Ipv4Addr::from([response[1], response[2], response[3], response[4]]);
+    ensure!(response[1] == 10 && response[2] == 253,
+        "QUIC v3 returned unexpected assigned IP");
+
+    let mut packet = [0u8; 28];
+    packet[0] = 0x45;
+    packet[2..4].copy_from_slice(&(28u16).to_be_bytes());
+    packet[8] = 64;
+    packet[9] = 1;
+    packet[12..16].copy_from_slice(&assigned.octets());
+    packet[16..20].copy_from_slice(&[10, 253, 0, 1]);
+    packet[20] = 8;
+    packet[24..26].copy_from_slice(&25u16.to_be_bytes());
+    packet[26..28].copy_from_slice(&1u16.to_be_bytes());
+    let icmp_sum = checksum(&packet[20..]);
+    packet[22..24].copy_from_slice(&icmp_sum);
+    let ip_sum = checksum(&packet[..20]);
+    packet[10..12].copy_from_slice(&ip_sum);
+
+    let mut seq = 0;
+    send_packet(&conn, &mut seq, &packet).await?;
+    let mut datagrams = DatagramReader::new();
+    let reply = timeout(OPERATION_TIMEOUT, datagrams.read(&conn)).await??;
+    ensure!(reply.len() == 28 && reply[16..20] == assigned.octets()
+        && reply[20] == 0, "QUIC v3 IPv4 echo reply mismatch");
+    println!("QUIC v3 authenticated echo OK, assigned IP: {assigned}");
+    conn.close(0u32.into(), b"done");
+    endpoint.wait_idle().await;
+    Ok(())
 }
 
 /// Parallel QUIC v3 listener for the ordinary TCP server.
