@@ -86,6 +86,14 @@ impl KeyRing {
         self.keys.len()
     }
 
+    /// Authenticate a transport-bound proof from QUIC v3. The exporter is
+    /// already unique to the verified TLS connection; no shared plaintext
+    /// challenge or replayable application token is used.
+    pub fn verify_quic_exporter(&self, exporter: &[u8], proof: &[u8]) -> bool {
+        proof.len() == 32
+            && self.keys.iter().any(|(_, key)| ring::hmac::verify(key, exporter, proof).is_ok())
+    }
+
     pub fn is_empty(&self) -> bool {
         self.keys.is_empty()
     }
