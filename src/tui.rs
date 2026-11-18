@@ -303,8 +303,11 @@ pub(crate) async fn profiles_menu() -> Result<()> {
             3 => {
                 if let Some(profile) = choose_profile()? {
                     if confirm(&format!("Удалить профиль {}", profile.name))? {
-                        crate::profile::remove(&profile.name)?;
-                        println!("Удалено.");
+                        if crate::profile::remove(&profile.name)? {
+                            println!("Удалено.");
+                        } else {
+                            println!("Профиль уже отсутствует.");
+                        }
                     }
                 }
                 Ok(())
