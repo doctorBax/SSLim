@@ -147,7 +147,7 @@ Wants=network-online.target
 
 [Service]
 ExecStartPre=/etc/sslim/network up
-ExecStart=/usr/local/bin/sslim server --host 0.0.0.0 --device tun --tun-name sslim0 --multi-tun --cert /etc/sslim/server.pem --key /etc/sslim/server.key --secrets-file /etc/sslim/clients.txt
+ExecStart=/usr/local/bin/sslim server --host 0.0.0.0 --device tun --tun-name sslim0 --multi-tun --cert /etc/sslim/server.pem --key /etc/sslim/server.key --secrets-file /etc/sslim/clients.txt --udp-port 9443
 ExecStopPost=/etc/sslim/network down
 Restart=on-failure
 RestartSec=3
@@ -168,5 +168,6 @@ if $upgrade; then
   echo "SSLim upgraded. Existing links still work. Previous files: $backup"
   exit 0
 fi
-echo 'Allow inbound TCP port 9443 in your VPS firewall. Copy this private link into Blade:'
+echo 'Allow inbound TCP and UDP port 9443 in your VPS/provider firewall. Android Blade Auto uses QUIC v3 when available; old TCP clients remain compatible.'
+echo 'Copy this private link into Blade:'
 cat "$tmp/profile"
