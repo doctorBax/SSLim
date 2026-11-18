@@ -53,6 +53,15 @@ assert 'link.append("&ca=").append(Base64.getEncoder().encodeToString(' in profi
 assert 'caPem.getBytes(StandardCharsets.UTF_8)' in profile_store
 assert 'else if (key.equals("u")) marker = value' in profile_store
 assert 'else if (key.equals("ca"))' in profile_store
+# Android must not delete its last good JSON profile database when a rename
+# fails, and must recover an interrupted atomic write on startup.
+assert 'new AtomicFile(file(context))' in profile_store
+assert 'target.startWrite()' in profile_store
+assert 'target.finishWrite(output)' in profile_store
+assert 'target.failWrite(output)' in profile_store
+assert 'store.openRead()' in profile_store
+assert 'target.delete()' not in profile_store
+
 vpn = (root / "BladeVpn.java").read_text(encoding="utf-8")
 assert 'runTcpSessionAttempt(config.marker)' in vpn
 assert 'catch (LegacyUpgradeRejected rejected)' in vpn
