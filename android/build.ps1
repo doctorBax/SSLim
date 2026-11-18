@@ -38,6 +38,19 @@ try {
     $archive = [IO.Compression.ZipFile]::Open($unsigned, [IO.Compression.ZipArchiveMode]::Update)
     try {
         [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive,(Join-Path $tmp.FullName 'classes.dex'),'classes.dex') | Out-Null
+        $nativeRoot = Join-Path $PSScriptRoot 'jniLibs'
+        if (!(Test-Path -LiteralPath $nativeRoot)) {
+            throw 'Missing Android QUIC native libraries (run Android native build first)'
+        }
+        $quicLibraries = @(Get-ChildItem -LiteralPath $nativeRoot -Recurse -Filter 'libbladequic.so')
+        if ($quicLibraries.Count -eq 0) {
+            throw 'Native QUIC library not found in android/jniLibs'
+        }
+        foreach ($library in $quicLibraries) {
+            $relative = $library.FullName.Substring($nativeRoot.Length + 1).Replace('\\','/')
+            $entry = 'lib/' + $relative
+            [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive,$library.FullName,$entry) | Out-Null
+        }
     } finally { $archive.Dispose() }
     Run (Join-Path $tools 'zipalign.exe') @('-f','4',$unsigned,$aligned)
     New-Item -ItemType Directory -Path $build -Force | Out-Null
