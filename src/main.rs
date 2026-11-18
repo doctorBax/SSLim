@@ -1,6 +1,8 @@
 mod auth;
 mod tui;
 #[cfg(target_os = "linux")]
+mod transport_admin;
+#[cfg(target_os = "linux")]
 mod tui_linux;
 #[cfg(windows)]
 mod tui_windows;

@@ -45,13 +45,28 @@ def run(binary: str) -> None:
 
     try:
         expect("Главное меню · Linux")
+        # Server → Auto transport is navigable without root or service changes.
+        output = b""
+        os.write(master, b"\r")
+        expect("Linux · сервер")
+        expect("Авто-транспорт TCP + QUIC v3")
+        output = b""
+        os.write(master, b"2")
+        expect("Сервер · Авто-транспорт Blade")
+        expect("Включить Авто: TCP v1 + UDP/QUIC v3")
+        output = b""
+        os.write(master, b"0")
+        expect("Linux · сервер")
+        output = b""
+        os.write(master, b"0")
+        expect("Главное меню · Linux")
         # The arrow down from first item selects "Ключи клиентов".
+        output = b""
         os.write(master, b"\x1b[B")
         os.write(master, b"\r")
         expect("Linux · ключи клиентов")
-        os.write(master, b"0")
-        # The main heading appeared once before; wait for a second occurrence.
         output = b""
+        os.write(master, b"0")
         expect("Главное меню · Linux")
         os.write(master, b"0")
         child.wait(timeout=5)

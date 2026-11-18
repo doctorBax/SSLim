@@ -40,25 +40,54 @@ async fn manual_server() -> Result<()> {
         "--tun-name", &tun, "--multi-tun"]);
     let cc = prompt("TCP congestion control (Enter — системный)", "")?;
     if !cc.is_empty() { args.extend(argv(&["--congestion-control", &cc])); }
-    let udp = prompt("UDP порт QUIC v3 (пусто — выключен; обычно тот же порт, что TCP)", "")?;
-    if !udp.is_empty() { args.extend(argv(&["--udp-port", &udp])); }
+    let udp = prompt("UDP порт QUIC v3 (по умолчанию равен порту TCP, 0 — отключить)", &port)?;
+    if !udp.is_empty() && udp != "0" { args.extend(argv(&["--udp-port", &udp])); }
     invoke(args).await
 }
 
+async fn auto_transport_menu() -> Result<()> {
+    let items = [
+        "Показать состояние TCP / QUIC",
+        "Включить Авто: TCP v1 + UDP/QUIC v3 (один порт)",
+        "Отключить QUIC v3 (оставить TCP v1)"
+    ];
+    while let Some(n) = pick("Сервер · Авто-транспорт Blade", &items)? {
+        let result = match n {
+            0 => crate::transport_admin::status(),
+            1 => {
+                println!("Авто-транспорт не меняет клиентские ссылки, секреты или сертификаты.");
+                println!("Будет включён UDP на том же числовом порту, что TCP.");
+                if confirm("Включить UDP/QUIC v3? Служба кратко перезапустится")? {
+                    crate::transport_admin::configure(true)
+                } else { Ok(()) }
+            }
+            2 => if confirm("Отключить QUIC v3? TCP сохранится, служба перезапустится")? {
+                crate::transport_admin::configure(false)
+            } else { Ok(()) },
+            _ => Ok(()),
+        };
+        if let Err(error) = result { eprintln!("Ошибка: {error:#}"); }
+        pause();
+    }
+    Ok(())
+}
+
 async fn service_menu() -> Result<()> {
-    let items = ["Статус sslim.service", "Запустить службу", "Перезапустить службу",
+    let items = ["Статус sslim.service", "Авто-транспорт TCP + QUIC v3 (для Blade)",
+        "Запустить службу", "Перезапустить службу",
         "Остановить службу", "Запустить сервер вручную"];
     while let Some(n) = pick("Linux · сервер", &items)? {
         let result = match n {
             0 => systemctl("status"),
-            1 => systemctl("start"),
-            2 => if confirm("Перезапустить службу? VPN-сеансы оборвутся")? {
+            1 => { auto_transport_menu().await?; continue; },
+            2 => systemctl("start"),
+            3 => if confirm("Перезапустить службу? VPN-сеансы оборвутся")? {
                 systemctl("restart")
             } else { Ok(()) },
-            3 => if confirm("Остановить службу? VPN-сеансы оборвутся")? {
+            4 => if confirm("Остановить службу? VPN-сеансы оборвутся")? {
                 systemctl("stop")
             } else { Ok(()) },
-            4 => manual_server().await,
+            5 => manual_server().await,
             _ => Ok(()),
         };
         if let Err(e) = result { eprintln!("Ошибка: {e:#}"); }
@@ -150,10 +179,16 @@ async fn connect_profile() -> Result<()> {
 }
 
 async fn quic_menu() -> Result<()> {
-    let items = ["Запустить QUIC-сервер", "Подключить QUIC-клиент", "QUIC probe"];
+    let items = ["LEGACY QUIC v2 — отдельный сервер (НЕ Blade)",
+        "LEGACY QUIC v2 — отдельный клиент", "LEGACY QUIC v2 — probe"];
     while let Some(n) = pick("Linux · экспериментальный QUIC", &items)? {
         let result = match n {
             0 => {
+                println!("ВНИМАНИЕ: это старый самостоятельный QUIC v2, несовместимый с Android Blade QUIC v3.");
+                println!("Для Blade: главное меню → Сервер и служба → Авто-транспорт TCP + QUIC v3.");
+                if !confirm("Всё равно запускать отдельный QUIC v2")? {
+                    continue;
+                }
                 let listen = prompt("IP:port для сервера", "0.0.0.0:9543")?;
                 let cert = required("Сертификат PEM", "/etc/sslim/server.pem")?;
                 let key = required("Ключ PEM", "/etc/sslim/server.key")?;
@@ -228,7 +263,7 @@ async fn tools_menu() -> Result<()> {
 
 pub(crate) async fn run() -> Result<()> {
     let menu = ["Сервер и служба", "Ключи клиентов", "VPN-клиент (TUN)",
-        "Профили", "QUIC (экспериментально)", "Диагностика",
+        "Профили", "Legacy QUIC v2 (НЕ для Blade)", "Диагностика",
         "О программе", "Выход"];
     loop {
         match pick("Главное меню · Linux", &menu)? {
