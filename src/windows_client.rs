@@ -350,17 +350,34 @@ async fn verify_exit() -> Result<String> {
             "https://1.1.1.1/cdn-cgi/trace",
         ])
         .output()
-        .await?;
-    let output = std::str::from_utf8(&response.stdout)?;
+        .await
+        .context("failed to launch curl.exe for optional exit IP check")?;
+    ensure!(
+        response.status.success(),
+        "optional exit IP check failed (curl {}): {}",
+        response.status,
+        String::from_utf8_lossy(&response.stderr).trim()
+    );
+    let output = std::str::from_utf8(&response.stdout)
+        .context("exit IP check returned invalid UTF-8")?;
     let exit_ip = output
         .lines()
         .find_map(|line| line.strip_prefix("ip="))
-        .map(str::to_owned);
-    ensure!(
-        response.status.success() && exit_ip.is_some(),
-        "could not verify the tunnel exit IP"
-    );
-    Ok(exit_ip.expect("checked above"))
+        .context("exit IP check response contained no ip= field")?;
+    Ok(exit_ip.to_owned())
+}
+
+/// The external IP check is an advisory diagnostic, not a tunnel health check.
+/// A blocked or unreachable third-party website must never tear down a
+/// successful TLS/SSLim session.
+fn report_exit_check(outcome: Result<String>) {
+    match outcome {
+        Ok(ip) => println!("{OK_MARK} exit IP: {ip}. Press Ctrl+C to disconnect."),
+        Err(error) => eprintln!(
+            "{WARN_MARK} exit IP could not be verified: {error:#}{RESET}. \
+             Tunnel remains connected; check traffic manually."
+        ),
+    }
 }
 
 async fn report(counters: &Counters, enabled: bool) -> Result<()> {
@@ -455,8 +472,9 @@ async fn connect_once(resolved: &Resolved) -> Result<()> {
         }
     };
     let check = async {
-        let ip = verify_exit().await?;
-        println!("{OK_MARK} exit IP: {ip}. Press Ctrl+C to disconnect.");
+        report_exit_check(verify_exit().await);
+        // Keep the VPN running whether the optional third-party probe passed
+        // or failed. Only tunnel I/O, shutdown and the user can end a session.
         std::future::pending::<Result<()>>().await
     };
     let result = tokio::select! {
@@ -712,5 +730,18 @@ mod tests {
             let mask = u32::MAX << (32 - prefix.parse::<u32>().unwrap());
             assert_ne!(u32::from(server) & mask, network);
         }
+    }
+}
+
+#[cfg(test)]
+mod exit_check_tests {
+    use super::*;
+
+    #[test]
+    fn optional_exit_check_must_not_propagate_errors() {
+        // A failed third-party lookup is intentionally consumed here instead
+        // of being propagated into the tunnel reconnect loop.
+        report_exit_check(Err(anyhow::anyhow!("test endpoint unavailable")));
+        report_exit_check(Ok("192.0.2.1".into()));
     }
 }
