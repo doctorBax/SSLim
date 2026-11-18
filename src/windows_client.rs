@@ -564,7 +564,7 @@ pub async fn run(args: BladeArgs) -> Result<()> {
                     }
                     Err(error) => {
                         eprintln!(
-                            "{WARN_MARK} {error}{RESET}\n{DIM}reconnecting in {delay}s (Ctrl+C to quit){RESET}"
+                            "{WARN_MARK} {error:#}{RESET}\n{DIM}reconnecting in {delay}s (Ctrl+C to quit){RESET}"
                         );
                         tokio::select! {
                             _ = tokio::time::sleep(Duration::from_secs(delay)) => {}
