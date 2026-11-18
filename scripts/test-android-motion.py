@@ -53,5 +53,11 @@ assert 'link.append("&ca=").append(Base64.getEncoder().encodeToString(' in profi
 assert 'caPem.getBytes(StandardCharsets.UTF_8)' in profile_store
 assert 'else if (key.equals("u")) marker = value' in profile_store
 assert 'else if (key.equals("ca"))' in profile_store
+vpn = (root / "BladeVpn.java").read_text(encoding="utf-8")
+assert 'runTcpSessionAttempt(config.marker)' in vpn
+assert 'catch (LegacyUpgradeRejected rejected)' in vpn
+assert 'runTcpSessionAttempt("lab-packet/1")' in vpn
+assert 'response.indexOf("HTTP/1.1 404 ") == 0' in vpn
+assert 'authenticate(input, output, profile, marker)' in vpn
 
 print("PASS: shared motion, theme, menu actions, reduced motion, scroll, errors and profile links")
