@@ -79,7 +79,7 @@ async fn service_menu() -> Result<()> {
     while let Some(n) = pick("Linux · сервер", &items)? {
         let result = match n {
             0 => systemctl("status"),
-            1 => auto_transport_menu().await,
+            1 => { auto_transport_menu().await?; continue; },
             2 => systemctl("start"),
             3 => if confirm("Перезапустить службу? VPN-сеансы оборвутся")? {
                 systemctl("restart")
