@@ -113,6 +113,10 @@ enum Command {
         /// Linux TCP congestion control algorithm for connections accepted by this listener
         #[arg(long)]
         congestion_control: Option<String>,
+        /// Enable QUIC v3 UDP on this port alongside the existing TCP listener.
+        /// Off by default for complete compatibility with previous servers.
+        #[arg(long)]
+        udp_port: Option<u16>,
     },
     #[cfg(target_os = "linux")]
     /// Manage client keys on a server
@@ -287,6 +291,7 @@ async fn dispatch_command(command: Command) -> Result<()> {
             tun_name,
             multi_tun,
             congestion_control,
+            udp_port,
         } => {
             let ring = match &secrets_file {
                 Some(list) => KeyRing::from_file(list)?,
@@ -317,6 +322,15 @@ async fn dispatch_command(command: Command) -> Result<()> {
             if let Some(algorithm) = congestion_control {
                 set_congestion_control(&listener, &algorithm)?;
             }
+            // UDP is explicitly opt-in. The old TCP listener and all its
+            // authentication responses remain unchanged.
+            let _udp_server = if let Some(udp_port) = udp_port {
+                ensure!(matches!(device, Device::Tun) && multi_tun,
+                    "QUIC v3 requires --device tun --multi-tun");
+                Some(quic::start_shared(&host, udp_port, &cert, &key, server.clone())?)
+            } else {
+                None
+            };
             let permits = Arc::new(Semaphore::new(256));
             println!("listening on {} ({device:?})", listener.local_addr()?);
             loop {
