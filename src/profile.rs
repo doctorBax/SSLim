@@ -129,7 +129,11 @@ impl Profile {
             }
         }
         let profile = Self {
-            name: if label.is_empty() { host.to_owned() } else { label },
+            // Android lets users choose arbitrary Unicode labels, which it
+            // percent-encodes in shared links. Keep connectivity working on
+            // Linux/Windows by choosing the safe host name as a local label
+            // when the remote display name is not a valid profile filename.
+            name: if valid_token(&label, "") { label } else { host.to_owned() },
             host: host.to_owned(),
             port,
             server_name: if sni.is_empty() { host.to_owned() } else { sni },
@@ -347,6 +351,18 @@ mod tests {
         assert_eq!(parsed.port, DEFAULT_PORT);
         assert_eq!(parsed.server_name, "vpn.example.com");
         assert_eq!(parsed.name, "vpn.example.com");
+        assert_eq!(parsed.secret().unwrap(), vec![7u8; 32]);
+    }
+
+    #[test]
+    fn android_percent_encoded_display_name_does_not_break_import() {
+        let uri = format!(
+            "sslim://vpn.example.com:9443?sni=vpn.example.com&k={}&n=%D0%9C%D0%BE%D0%B9%20VPN",
+            BASE64.encode([7u8; 32])
+        );
+        let parsed = Profile::from_uri(&uri).unwrap();
+        assert_eq!(parsed.name, "vpn.example.com");
+        assert_eq!(parsed.host, "vpn.example.com");
         assert_eq!(parsed.secret().unwrap(), vec![7u8; 32]);
     }
 
