@@ -310,7 +310,25 @@ public final class BladeVpn extends VpnService {
         counters.rttSampleTime = SystemClock.elapsedRealtime();
     }
 
+    private static final class LegacyUpgradeRejected extends IOException {
+        LegacyUpgradeRejected() {
+            super("TCP Upgrade returned HTTP 404");
+        }
+    }
+
     private void runTcpSession() throws Exception {
+        // Retry only an HTTP 404 from a valid TLS session, never a transport or
+        // certificate error. Historical servers (v0.1/v0.2) require this marker.
+        try {
+            runTcpSessionAttempt(config.marker);
+        } catch (LegacyUpgradeRejected rejected) {
+            if (stopping || !"sync/1".equals(config.marker)) throw rejected;
+            Log.i("Blade", "TCP Upgrade 404; retrying v0.1/v0.2 marker");
+            runTcpSessionAttempt("lab-packet/1");
+        }
+    }
+
+    private void runTcpSessionAttempt(String marker) throws Exception {
         ProfileStore.Profile profile = config;
         phase = "соединение с сервером";
         try (Socket raw = new Socket()) {
@@ -346,7 +364,7 @@ public final class BladeVpn extends VpnService {
                 DataOutputStream output = new DataOutputStream(tls.getOutputStream());
                 final String address;
                 try {
-                    address = authenticate(input, output, profile);
+                    address = authenticate(input, output, profile, marker);
                 } catch (EOFException error) {
                     throw new IOException("Сервер отклонил соединение", error);
                 }
@@ -577,7 +595,7 @@ public final class BladeVpn extends VpnService {
     }
 
     private String authenticate(DataInputStream input, DataOutputStream output,
-                              ProfileStore.Profile profile) throws Exception {
+                              ProfileStore.Profile profile, String marker) throws Exception {
         byte[] nonceBytes = new byte[16];
         new SecureRandom().nextBytes(nonceBytes);
         String nonce = hex(nonceBytes);
@@ -587,7 +605,7 @@ public final class BladeVpn extends VpnService {
         String tag = hex(mac.doFinal(("vpn-bot-lab-transport-v1\0" + timestamp + "\0" + nonce)
             .getBytes(StandardCharsets.US_ASCII)));
         String request = "POST /connect HTTP/1.1\r\nHost: " + profile.serverName
-            + "\r\nConnection: Upgrade\r\nUpgrade: " + profile.marker + "\r\nX-Session-Time: " + timestamp
+            + "\r\nConnection: Upgrade\r\nUpgrade: " + marker + "\r\nX-Session-Time: " + timestamp
             + "\r\nX-Session-Nonce: " + nonce + "\r\nX-Session-Tag: " + tag
             + "\r\nX-Session-Address: auto\r\n\r\n";
         output.write(request.getBytes(StandardCharsets.US_ASCII));
@@ -611,6 +629,9 @@ public final class BladeVpn extends VpnService {
                         }
                     }
                     return "10.253.0.2";
+                }
+                if (response.indexOf("HTTP/1.1 404 ") == 0) {
+                    throw new LegacyUpgradeRejected();
                 }
                 break;
             }

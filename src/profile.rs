@@ -83,8 +83,15 @@ impl Profile {
             "sslim://{}:{}?sni={}&k={}&u={}&n={}",
             self.host, self.port, self.server_name, secret, self.marker, self.name
         );
+        // Imported Windows profiles move the private CA from ca_base64 to
+        // ca_file on disk. Re-export must preserve that trust anchor, or
+        // sharing an otherwise valid profile produces an unusable URI.
         if let Some(ca) = &self.ca_base64 {
             uri.push_str(&format!("&ca={}", BASE64.encode(ca.as_bytes())));
+        } else if let Some(path) = &self.ca_file {
+            let ca = fs::read(path)
+                .with_context(|| format!("reading CA {}", path.display()))?;
+            uri.push_str(&format!("&ca={}", BASE64.encode(ca)));
         }
         Ok(uri)
     }
@@ -122,7 +129,11 @@ impl Profile {
             }
         }
         let profile = Self {
-            name: if label.is_empty() { host.to_owned() } else { label },
+            // Android lets users choose arbitrary Unicode labels, which it
+            // percent-encodes in shared links. Keep connectivity working on
+            // Linux/Windows by choosing the safe host name as a local label
+            // when the remote display name is not a valid profile filename.
+            name: if valid_token(&label, "") { label } else { host.to_owned() },
             host: host.to_owned(),
             port,
             server_name: if sni.is_empty() { host.to_owned() } else { sni },
@@ -222,9 +233,16 @@ pub fn list() -> Result<Vec<Profile>> {
     Ok(profiles)
 }
 
+fn remove_profile_file(path: &std::path::Path) -> Result<bool> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error).with_context(|| format!("removing {}", path.display())),
+    }
+}
+
 pub fn remove(name: &str) -> Result<bool> {
-    let path = profile_path(name)?;
-    Ok(fs::remove_file(&path).is_ok())
+    remove_profile_file(&profile_path(name)?)
 }
 
 /// The profile to connect with when no explicit one is named: the stored
@@ -286,6 +304,38 @@ mod tests {
     }
 
     #[test]
+    fn uri_keeps_private_ca_after_windows_import() {
+        let mut profile = sample();
+        let ca = "-----BEGIN CERTIFICATE-----\\nZXhhbXBsZQ==\\n-----END CERTIFICATE-----\\n";
+        let path = std::env::temp_dir().join(format!(
+            "sslim-ca-export-{}-{}.pem", std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        fs::write(&path, ca).unwrap();
+        profile.ca_file = Some(path.clone());
+        profile.ca_base64 = None;
+        let result = (|| -> Result<()> {
+            let uri = profile.to_uri()?;
+            let restored = Profile::from_uri(&uri)?;
+            assert_eq!(restored.ca_base64.as_deref(), Some(ca));
+            Ok(())
+        })();
+        fs::remove_file(path).unwrap();
+        result.unwrap();
+    }
+
+    #[test]
+    fn uri_ca_file_read_failure_is_not_silently_ignored() {
+        let mut profile = sample();
+        profile.ca_base64 = None;
+        profile.ca_file = Some(std::env::temp_dir().join(format!(
+            "sslim-missing-ca-{}-never-existed.pem", std::process::id()
+        )));
+        assert!(profile.to_uri().is_err());
+    }
+
+    #[test]
     fn uri_requires_secret_and_scheme() {
         assert!(Profile::from_uri("https://vpn.example.com").is_err());
         assert!(
@@ -301,6 +351,18 @@ mod tests {
         assert_eq!(parsed.port, DEFAULT_PORT);
         assert_eq!(parsed.server_name, "vpn.example.com");
         assert_eq!(parsed.name, "vpn.example.com");
+        assert_eq!(parsed.secret().unwrap(), vec![7u8; 32]);
+    }
+
+    #[test]
+    fn android_percent_encoded_display_name_does_not_break_import() {
+        let uri = format!(
+            "sslim://vpn.example.com:9443?sni=vpn.example.com&k={}&n=%D0%9C%D0%BE%D0%B9%20VPN",
+            BASE64.encode([7u8; 32])
+        );
+        let parsed = Profile::from_uri(&uri).unwrap();
+        assert_eq!(parsed.name, "vpn.example.com");
+        assert_eq!(parsed.host, "vpn.example.com");
         assert_eq!(parsed.secret().unwrap(), vec![7u8; 32]);
     }
 
@@ -326,6 +388,23 @@ mod tests {
         assert_ne!(valid, damaged);
         assert!(toml::from_str::<Profile>(&damaged).is_err());
         assert!(toml::from_str::<Profile>(&valid).is_ok());
+    }
+
+    #[test]
+    fn remove_distinguishes_missing_from_io_failure() {
+        let root = std::env::temp_dir().join(format!(
+            "sslim-profile-remove-{}-{}", std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        fs::create_dir(&root).unwrap();
+        assert_eq!(remove_profile_file(&root.join("missing")).unwrap(), false);
+        assert!(remove_profile_file(&root).is_err(), "a directory is not a file");
+        let file = root.join("existing.toml");
+        fs::write(&file, "test").unwrap();
+        assert_eq!(remove_profile_file(&file).unwrap(), true);
+        assert_eq!(remove_profile_file(&file).unwrap(), false);
+        fs::remove_dir(root).unwrap();
     }
 
     #[test]

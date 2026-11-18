@@ -39,6 +39,9 @@ use crate::tun::Tun;
 const UPGRADE: &[u8] =
     b"HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: sync/1\r\n\r\n";
 #[cfg(target_os = "linux")]
+const LEGACY_UPGRADE: &[u8] =
+    b"HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: lab-packet/1\r\n\r\n";
+#[cfg(target_os = "linux")]
 const PUBLIC_PAGE: &[u8] = b"<!doctype html><title>Service</title><p>Service available.</p>";
 const IO_TIMEOUT: Duration = Duration::from_secs(5);
 const LEGACY_TCP_MARKER: &str = "lab-packet/1";
@@ -131,15 +134,24 @@ impl<'a> Request<'a> {
         self.headers.get(name).copied().unwrap_or_default()
     }
 
-    fn is_upgrade(&self) -> bool {
-        self.method == "POST"
-            && self.path == "/connect"
-            && self.version == "HTTP/1.1"
-            && self.get("upgrade").eq_ignore_ascii_case("sync/1")
-            && self
-                .get("connection")
-                .split(',')
+    // Both markers use the same TLS 1.3, authentication and packet framing.
+    // Older v0.1.x/v0.2.x clients cannot retry with the newer sync/1 marker.
+    fn upgrade_marker(&self) -> Option<&'static str> {
+        if self.method != "POST"
+            || self.path != "/connect"
+            || self.version != "HTTP/1.1"
+            || !self.get("connection").split(',')
                 .any(|token| token.trim().eq_ignore_ascii_case("upgrade"))
+        {
+            return None;
+        }
+        if self.get("upgrade").eq_ignore_ascii_case(crate::profile::DEFAULT_MARKER) {
+            Some(crate::profile::DEFAULT_MARKER)
+        } else if self.get("upgrade").eq_ignore_ascii_case(LEGACY_TCP_MARKER) {
+            Some(LEGACY_TCP_MARKER)
+        } else {
+            None
+        }
     }
 }
 
@@ -328,7 +340,8 @@ impl Server {
         let Ok(request) = Request::parse(&raw) else {
             return answer(&mut stream, "400 Bad Request", b"Bad request", false).await;
         };
-        let verified = if tls13 && request.is_upgrade() {
+        let upgrade_marker = request.upgrade_marker();
+        let verified = if tls13 && upgrade_marker.is_some() {
             let loaded_ring = self
                 .secrets_file
                 .as_deref()
@@ -371,7 +384,8 @@ impl Server {
         {
             let (address, tun) = self.allocate_peer_tun().await?;
             let response = format!(
-                "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: sync/1\r\nX-Session-Address: {address}\r\n\r\n"
+                "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: {}\r\nX-Session-Address: {address}\r\n\r\n",
+                upgrade_marker.expect("authenticated connection has a supported marker")
             );
             timeout(IO_TIMEOUT, send(&mut stream, response.as_bytes())).await??;
             return relay_checked(stream, tun, Some(address)).await;
@@ -380,7 +394,12 @@ impl Server {
             Device::Tun => Some(Tun::open(&self.tun_name)?),
             _ => None,
         };
-        timeout(IO_TIMEOUT, send(&mut stream, UPGRADE)).await??;
+        let response = if upgrade_marker == Some(LEGACY_TCP_MARKER) {
+            LEGACY_UPGRADE
+        } else {
+            UPGRADE
+        };
+        timeout(IO_TIMEOUT, send(&mut stream, response)).await??;
         match tun {
             Some(tun) if self.multi_tun => {
                 relay_checked(stream, tun, Some(Ipv4Addr::new(10, 253, 0, 2))).await
@@ -472,6 +491,20 @@ async fn echo<S: AsyncRead + AsyncWrite + Unpin>(stream: S, device: Device) -> R
 #[cfg(test)]
 mod legacy_compat_tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn server_accepts_both_historical_tcp_upgrade_markers() {
+        for marker in [crate::profile::DEFAULT_MARKER, LEGACY_TCP_MARKER] {
+            let raw = format!(
+                "POST /connect HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive, Upgrade\r\nUpgrade: {marker}\r\n\r\n"
+            );
+            let request = Request::parse(raw.as_bytes()).unwrap();
+            assert_eq!(request.upgrade_marker(), Some(marker));
+        }
+        let raw = b"POST /connect HTTP/1.1\r\nConnection: Upgrade\r\nUpgrade: unknown/1\r\n\r\n";
+        assert_eq!(Request::parse(raw).unwrap().upgrade_marker(), None);
+    }
 
     #[test]
     fn retry_legacy_only_after_http_404_with_default_marker() {

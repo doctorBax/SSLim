@@ -45,4 +45,30 @@ editor = (root / "ProfileEditorActivity.java").read_text(encoding="utf-8")
 assert "field.setError(message)" in editor
 assert "field.requestFocus()" in editor
 
-print("PASS: shared motion, theme, menu actions, reduced motion, scroll and error contracts")
+# Sharing a historical profile must preserve its v0.1/v0.2 upgrade
+# marker and any private CA certificate; neither is optional for reconnecting.
+profile_store = (root / "ProfileStore.java").read_text(encoding="utf-8")
+assert '.append("&u=").append(marker)' in profile_store
+assert '.append("&n=").append(encodeUriComponent(name))' in profile_store
+assert 'value.getBytes(StandardCharsets.UTF_8)' in profile_store
+assert 'link.append("&ca=").append(Base64.getEncoder().encodeToString(' in profile_store
+assert 'caPem.getBytes(StandardCharsets.UTF_8)' in profile_store
+assert 'else if (key.equals("u")) marker = value' in profile_store
+assert 'else if (key.equals("ca"))' in profile_store
+# Android must not delete its last good JSON profile database when a rename
+# fails, and must recover an interrupted atomic write on startup.
+assert 'new AtomicFile(file(context))' in profile_store
+assert 'target.startWrite()' in profile_store
+assert 'target.finishWrite(output)' in profile_store
+assert 'target.failWrite(output)' in profile_store
+assert 'store.openRead()' in profile_store
+assert 'target.delete()' not in profile_store
+
+vpn = (root / "BladeVpn.java").read_text(encoding="utf-8")
+assert 'runTcpSessionAttempt(config.marker)' in vpn
+assert 'catch (LegacyUpgradeRejected rejected)' in vpn
+assert 'runTcpSessionAttempt("lab-packet/1")' in vpn
+assert 'response.indexOf("HTTP/1.1 404 ") == 0' in vpn
+assert 'authenticate(input, output, profile, marker)' in vpn
+
+print("PASS: shared motion, theme, menu actions, reduced motion, scroll, errors and profile links")

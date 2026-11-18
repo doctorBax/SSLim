@@ -1,6 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Health-check the actual existing TCP port on upgrades. A custom --port is
+# preserved in ExecStart, so probing 9443 unconditionally would force an
+# unnecessary rollback on healthy upgraded servers.
+service_tcp_port() {
+  local unit=$1 line port=9443
+  line=$(grep -m1 '^ExecStart=' "$unit") || { echo "Missing ExecStart in $unit" >&2; return 1; }
+  if [[ $line =~ (^|[[:space:]])--port(=|[[:space:]]+)([0-9]+)($|[[:space:]]) ]]; then
+    port=${BASH_REMATCH[3]}
+  fi
+  if [[ ! $port =~ ^[0-9]{1,5}$ ]] || (( 10#$port < 1 || 10#$port > 65535 )); then
+    echo "Invalid server TCP port in $unit" >&2
+    return 1
+  fi
+  printf '%s\n' "$((10#$port))"
+}
+
 host=${1:-}
 upgrade=false
 if [[ $host == --upgrade ]]; then upgrade=true; fi
@@ -159,8 +175,12 @@ chmod 0644 /etc/systemd/system/sslim.service
 fi
 systemctl daemon-reload
 systemctl enable --now sslim.service
-if ! timeout 15 bash -c 'until (echo > /dev/tcp/127.0.0.1/9443) 2>/dev/null; do sleep 0.25; done'; then
-  echo 'SSLim did not open TCP 9443.' >&2
+tcp_port=9443
+if $upgrade; then
+  tcp_port=$(service_tcp_port /etc/systemd/system/sslim.service)
+fi
+if ! PORT="$tcp_port" timeout 15 bash -c 'until (echo > /dev/tcp/127.0.0.1/$PORT) 2>/dev/null; do sleep 0.25; done'; then
+  echo "SSLim did not open TCP $tcp_port." >&2
   exit 1
 fi
 systemctl is-active --quiet sslim.service

@@ -1,11 +1,14 @@
 package ru.doctorbax.blade;
 
 import android.content.Context;
+import android.util.AtomicFile;
+import android.util.Log;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.File;
+import java.io.ByteArrayOutputStream;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.nio.charset.StandardCharsets;
@@ -43,9 +46,37 @@ public final class ProfileStore {
         }
 
         public String uri() {
-            return "sslim://" + host + ":" + port + "?sni=" + serverName
-                + "&k=" + Base64.getEncoder().encodeToString(secret) + "&n=" + name;
+            // Export every connection-critical field, especially the historical
+            // TCP marker and the server's private CA. Omitting either breaks
+            // importing a working profile on a second device.
+            StringBuilder link = new StringBuilder("sslim://")
+                .append(host).append(":").append(port)
+                .append("?sni=").append(serverName)
+                .append("&k=").append(Base64.getEncoder().encodeToString(secret))
+                .append("&u=").append(marker)
+                .append("&n=").append(encodeUriComponent(name));
+            if (caPem != null && !caPem.isEmpty()) {
+                link.append("&ca=").append(Base64.getEncoder().encodeToString(
+                    caPem.getBytes(StandardCharsets.UTF_8)));
+            }
+            return link.toString();
         }
+    }
+
+    /** Encode user-editable labels without changing existing ASCII profile links. */
+    private static String encodeUriComponent(String value) {
+        final char[] hex = "0123456789ABCDEF".toCharArray();
+        StringBuilder result = new StringBuilder();
+        for (byte octet : value.getBytes(StandardCharsets.UTF_8)) {
+            int b = octet & 255;
+            if ((b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z')
+                || (b >= '0' && b <= '9') || b == '-' || b == '_' || b == '.' || b == '~') {
+                result.append((char) b);
+            } else {
+                result.append('%').append(hex[b >>> 4]).append(hex[b & 15]);
+            }
+        }
+        return result.toString();
     }
 
     private static final String FILE = "profiles.json";
@@ -116,22 +147,22 @@ public final class ProfileStore {
     }
 
     private static synchronized void persist(Context context) {
+        AtomicFile target = new AtomicFile(file(context));
+        FileOutputStream output = null;
         try {
             JSONObject root = new JSONObject();
             root.put("active", activeId);
             JSONArray items = new JSONArray();
             for (Profile profile : profiles) items.put(encode(profile));
             root.put("profiles", items);
-            File target = file(context);
-            File temporary = new File(target.getParentFile(), FILE + ".tmp");
-            try (FileOutputStream out = new FileOutputStream(temporary)) {
-                out.write(root.toString().getBytes(StandardCharsets.UTF_8));
-            }
-            if (!temporary.renameTo(target)) {
-                target.delete();
-                temporary.renameTo(target);
-            }
-        } catch (Exception ignored) {
+            // Recover the previous JSON database if a write is interrupted.
+            // Never delete the last good copy after a failed rename.
+            output = target.startWrite();
+            output.write(root.toString().getBytes(StandardCharsets.UTF_8));
+            target.finishWrite(output);
+        } catch (Exception error) {
+            if (output != null) target.failWrite(output);
+            Log.e("Blade", "Unable to persist VPN profiles", error);
         }
     }
 
@@ -220,16 +251,18 @@ public final class ProfileStore {
     }
 
     private static byte[] readAll(File source) throws Exception {
-        if (!source.exists()) return null;
-        try (FileInputStream in = new FileInputStream(source)) {
-            byte[] data = new byte[(int) source.length()];
-            int read = 0;
-            while (read < data.length) {
-                int chunk = in.read(data, read, data.length - read);
-                if (chunk < 0) break;
-                read += chunk;
-            }
-            return java.util.Arrays.copyOf(data, read);
+        // AtomicFile restores interrupted writes from its .bak copy here.
+        // Reading the base file directly would miss an otherwise recoverable
+        // profile database after a crash during the first rename.
+        AtomicFile store = new AtomicFile(source);
+        if (!source.exists() && !new File(source.getPath() + ".bak").exists()) return null;
+        try (FileInputStream in = store.openRead()) {
+            ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+            byte[] buffer = new byte[4096];
+            int count;
+            while ((count = in.read(buffer)) != -1) bytes.write(buffer, 0, count);
+            return bytes.toByteArray();
         }
     }
+
 }
