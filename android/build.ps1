@@ -47,7 +47,7 @@ try {
             throw 'Native QUIC library not found in android/jniLibs'
         }
         foreach ($library in $quicLibraries) {
-            $relative = $library.FullName.Substring($nativeRoot.Length + 1).Replace('\\','/')
+            $relative = $library.FullName.Substring($nativeRoot.Length + 1).Replace('\','/')
             $entry = 'lib/' + $relative
             [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive,$library.FullName,$entry) | Out-Null
         }
