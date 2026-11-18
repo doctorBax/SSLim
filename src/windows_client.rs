@@ -380,6 +380,16 @@ fn report_exit_check(outcome: Result<String>) {
     }
 }
 
+async fn monitor_exit_check<F>(check: F) -> Result<()>
+where
+    F: std::future::Future<Output = Result<String>>,
+{
+    report_exit_check(check.await);
+    // Keep the VPN running whether the optional third-party probe passed
+    // or failed. Only tunnel I/O, shutdown and the user can end a session.
+    std::future::pending::<Result<()>>().await
+}
+
 async fn report(counters: &Counters, enabled: bool) -> Result<()> {
     if !enabled {
         std::future::pending::<()>().await;
@@ -471,12 +481,7 @@ async fn connect_once(resolved: &Resolved) -> Result<()> {
             }
         }
     };
-    let check = async {
-        report_exit_check(verify_exit().await);
-        // Keep the VPN running whether the optional third-party probe passed
-        // or failed. Only tunnel I/O, shutdown and the user can end a session.
-        std::future::pending::<Result<()>>().await
-    };
+    let check = monitor_exit_check(verify_exit());
     let result = tokio::select! {
         result = uplink => result,
         result = downlink => result,
@@ -737,11 +742,25 @@ mod tests {
 mod exit_check_tests {
     use super::*;
 
-    #[test]
-    fn optional_exit_check_must_not_propagate_errors() {
-        // A failed third-party lookup is intentionally consumed here instead
-        // of being propagated into the tunnel reconnect loop.
-        report_exit_check(Err(anyhow::anyhow!("test endpoint unavailable")));
-        report_exit_check(Ok("192.0.2.1".into()));
+    #[tokio::test]
+    async fn exit_verification_failure_must_not_disconnect_tunnel() {
+        let probe = async { Err(anyhow::anyhow!("test endpoint unavailable")) };
+        assert!(
+            timeout(Duration::from_millis(20), monitor_exit_check(probe))
+                .await
+                .is_err(),
+            "external IP check failure must not exit the active VPN session"
+        );
+    }
+
+    #[tokio::test]
+    async fn exit_verification_success_must_not_disconnect_tunnel() {
+        let probe = async { Ok("192.0.2.1".into()) };
+        assert!(
+            timeout(Duration::from_millis(20), monitor_exit_check(probe))
+                .await
+                .is_err(),
+            "external IP check success must not exit the active VPN session"
+        );
     }
 }
