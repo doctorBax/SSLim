@@ -8,6 +8,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.File;
+import java.io.ByteArrayOutputStream;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.nio.charset.StandardCharsets;
@@ -234,16 +235,18 @@ public final class ProfileStore {
     }
 
     private static byte[] readAll(File source) throws Exception {
-        if (!source.exists()) return null;
-        try (FileInputStream in = new FileInputStream(source)) {
-            byte[] data = new byte[(int) source.length()];
-            int read = 0;
-            while (read < data.length) {
-                int chunk = in.read(data, read, data.length - read);
-                if (chunk < 0) break;
-                read += chunk;
-            }
-            return java.util.Arrays.copyOf(data, read);
+        // AtomicFile restores interrupted writes from its .bak copy here.
+        // Reading the base file directly would miss an otherwise recoverable
+        // profile database after a crash during the first rename.
+        AtomicFile store = new AtomicFile(source);
+        if (!source.exists() && !new File(source.getPath() + ".bak").exists()) return null;
+        try (FileInputStream in = store.openRead()) {
+            ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+            byte[] buffer = new byte[4096];
+            int count;
+            while ((count = in.read(buffer)) != -1) bytes.write(buffer, 0, count);
+            return bytes.toByteArray();
         }
     }
+
 }
