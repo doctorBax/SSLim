@@ -22,6 +22,8 @@ jobs:
       - run: cargo build --release --locked
       - name: Verify TCP compatibility with v0.2.0 servers
         run: python3 scripts/test-legacy-tcp.py target/release/sslim
+      - name: Verify v0.1/v0.2 clients and newer clients against current server
+        run: python3 scripts/test-legacy-clients.py target/release/sslim
       - name: Verify nested interactive CLI menu (PTY)
         run: python3 scripts/test-cli-menu.py target/release/sslim
       - name: Verify concurrent Linux tunnels
