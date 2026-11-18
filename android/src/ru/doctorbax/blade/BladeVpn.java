@@ -256,7 +256,14 @@ public final class BladeVpn extends VpnService {
             return;
         }
         phase = "подключение UDP/QUIC v3";
-        int outcome = BladeQuic.connect(this, config);
+        int outcome;
+        try {
+            outcome = BladeQuic.connect(this, config);
+        } finally {
+            // A failed/restarting native session must not leave a previous
+            // Android VPN descriptor open during a subsequent TCP fallback.
+            closeResources();
+        }
         if (outcome == BladeQuic.UNAVAILABLE) {
             if (BladeOptions.TRANSPORT_QUIC.equals(preferred)) {
                 throw new IOException("UDP/QUIC v3 недоступен на этом сервере или в сети");
