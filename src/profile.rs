@@ -318,8 +318,14 @@ mod tests {
 
     #[test]
     fn malformed_profile_is_detected_without_changing_other_profiles() {
-        assert!(toml::from_str::<Profile>("marker = \"lab-packet/1\"ы").is_err());
-        assert!(toml::from_str::<Profile>(&toml::to_string(&sample()).unwrap()).is_ok());
+        let valid = toml::to_string(&sample()).unwrap();
+        let damaged = valid.replace(
+            "marker = \"sync/1\"",
+            "marker = \"lab-packet/1\"ы",
+        );
+        assert_ne!(valid, damaged);
+        assert!(toml::from_str::<Profile>(&damaged).is_err());
+        assert!(toml::from_str::<Profile>(&valid).is_ok());
     }
 
     #[test]
