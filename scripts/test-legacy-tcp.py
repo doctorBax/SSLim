@@ -76,6 +76,7 @@ async def test(binary):
                 "-pkeyopt", "ec_paramgen_curve:prime256v1",
                 "-nodes", "-days", "1", "-subj", "/CN=localhost",
                 "-addext", "subjectAltName=DNS:localhost",
+                "-addext", "basicConstraints=critical,CA:FALSE",
                 "-keyout", str(private_key), "-out", str(certificate),
             ],
             check=True, capture_output=True,
