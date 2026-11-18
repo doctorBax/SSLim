@@ -45,4 +45,13 @@ editor = (root / "ProfileEditorActivity.java").read_text(encoding="utf-8")
 assert "field.setError(message)" in editor
 assert "field.requestFocus()" in editor
 
-print("PASS: shared motion, theme, menu actions, reduced motion, scroll and error contracts")
+# Sharing a historical profile must preserve its v0.1/v0.2 upgrade
+# marker and any private CA certificate; neither is optional for reconnecting.
+profile_store = (root / "ProfileStore.java").read_text(encoding="utf-8")
+assert '.append("&u=").append(marker)' in profile_store
+assert 'link.append("&ca=").append(Base64.getEncoder().encodeToString(' in profile_store
+assert 'caPem.getBytes(StandardCharsets.UTF_8)' in profile_store
+assert 'else if (key.equals("u")) marker = value' in profile_store
+assert 'else if (key.equals("ca"))' in profile_store
+
+print("PASS: shared motion, theme, menu actions, reduced motion, scroll, errors and profile links")
