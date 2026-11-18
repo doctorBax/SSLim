@@ -229,9 +229,16 @@ pub fn list() -> Result<Vec<Profile>> {
     Ok(profiles)
 }
 
+fn remove_profile_file(path: &std::path::Path) -> Result<bool> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error).with_context(|| format!("removing {}", path.display())),
+    }
+}
+
 pub fn remove(name: &str) -> Result<bool> {
-    let path = profile_path(name)?;
-    Ok(fs::remove_file(&path).is_ok())
+    remove_profile_file(&profile_path(name)?)
 }
 
 /// The profile to connect with when no explicit one is named: the stored
@@ -365,6 +372,23 @@ mod tests {
         assert_ne!(valid, damaged);
         assert!(toml::from_str::<Profile>(&damaged).is_err());
         assert!(toml::from_str::<Profile>(&valid).is_ok());
+    }
+
+    #[test]
+    fn remove_distinguishes_missing_from_io_failure() {
+        let root = std::env::temp_dir().join(format!(
+            "sslim-profile-remove-{}-{}", std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        fs::create_dir(&root).unwrap();
+        assert_eq!(remove_profile_file(&root.join("missing")).unwrap(), false);
+        assert!(remove_profile_file(&root).is_err(), "a directory is not a file");
+        let file = root.join("existing.toml");
+        fs::write(&file, "test").unwrap();
+        assert_eq!(remove_profile_file(&file).unwrap(), true);
+        assert_eq!(remove_profile_file(&file).unwrap(), false);
+        fs::remove_dir(root).unwrap();
     }
 
     #[test]
