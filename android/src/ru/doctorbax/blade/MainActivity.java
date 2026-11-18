@@ -290,7 +290,7 @@ public final class MainActivity extends Activity {
         headline.setText(connected ? "VPN подключён" : starting ? "Подключаемся…" :
             stopping ? "Отключаемся…" : retrying ? "Восстанавливаем связь…" :
             failed ? "Соединение потеряно" : "VPN выключен");
-        details.setText(connected ? "IPv4-трафик проходит через туннель." :
+        details.setText(connected ? "IPv4 через " + BladeVpn.activeTransport + "." :
             starting ? "Устанавливаем защищённое соединение." :
             stopping ? "Завершаем текущий сеанс." : retrying || failed ? status :
             "Нажмите на стрелку, чтобы включить туннель.");
