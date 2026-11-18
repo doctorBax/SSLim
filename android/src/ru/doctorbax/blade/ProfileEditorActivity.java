@@ -23,13 +23,23 @@ import java.util.Base64;
 
 /** Create or edit one server profile. Every field is user-editable. */
 public final class ProfileEditorActivity extends Activity {
-    private static final int BACKGROUND = 0xff0b121a;
-    private static final int SURFACE = 0xff111e2a;
-    private static final int BORDER = 0xff263746;
-    private static final int WHITE = 0xffeff9f6;
-    private static final int MUTED = 0xffacbfcc;
-    private static final int MINT = 0xffb7f4cd;
-    private static final int CORAL = 0xffffb4a8;
+    private int BACKGROUND;
+    private int SURFACE;
+    private int BORDER;
+    private int WHITE;
+    private int MUTED;
+    private int MINT;
+    private int CORAL;
+
+    private void loadPalette() {
+        BACKGROUND = BladeAppearance.background(this);
+        SURFACE = BladeAppearance.surface(this);
+        BORDER = BladeAppearance.border(this);
+        WHITE = BladeAppearance.text(this);
+        MUTED = BladeAppearance.muted(this);
+        MINT = BladeAppearance.accent(this);
+        CORAL = BladeAppearance.danger(this);
+    }
     private static final Typeface MEDIUM = Typeface.create("sans-serif-medium", Typeface.NORMAL);
     private static final Typeface BOLD = Typeface.create("sans-serif", Typeface.BOLD);
 
@@ -47,8 +57,8 @@ public final class ProfileEditorActivity extends Activity {
     @Override public void onCreate(Bundle savedState) {
         super.onCreate(savedState);
         if (Build.VERSION.SDK_INT >= 30) getWindow().setDecorFitsSystemWindows(false);
-        getWindow().setStatusBarColor(BACKGROUND);
-        getWindow().setNavigationBarColor(BACKGROUND);
+        loadPalette();
+        BladeAppearance.applyWindow(this);
 
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
@@ -64,7 +74,7 @@ public final class ProfileEditorActivity extends Activity {
         LinearLayout content = column();
         content.setPadding(dp(22), dp(22), dp(22), dp(22));
         scroll.addView(content);
-        setContentView(scroll);
+        BladeMotion.mount(this, scroll);
 
         LinearLayout header = new LinearLayout(this);
         header.setGravity(Gravity.CENTER_VERTICAL);
@@ -72,7 +82,7 @@ public final class ProfileEditorActivity extends Activity {
         header.addView(title, new LinearLayout.LayoutParams(0, -2, 1f));
         TextView cancel = label("Отмена", 14, MUTED, MEDIUM);
         cancel.setPadding(dp(8), dp(8), dp(8), dp(8));
-        cancel.setOnClickListener(view -> finish());
+        BladeMotion.bind(cancel, () -> BladeMotion.finish(this));
         header.addView(cancel);
         add(content, header, 0);
 
@@ -88,7 +98,7 @@ public final class ProfileEditorActivity extends Activity {
         add(content, caption("ДОБАВИТЬ ПО ССЫЛКЕ"), 18);
         add(content, link, 6);
         Button fill = pill("Заполнить данные из ссылки");
-        fill.setOnClickListener(view -> fillFromLink());
+        BladeMotion.bind(fill, this::fillFromLink);
         add(content, fill, 8);
 
         add(content, caption("ОСНОВНЫЕ ДАННЫЕ"), 20);
@@ -113,7 +123,10 @@ public final class ProfileEditorActivity extends Activity {
         customCa.setTextColor(WHITE);
         customCa.setTextSize(13);
         customCa.setSingleLine(false);
-        customCa.setOnCheckedChangeListener((button, checked) -> caPem.setVisibility(checked ? View.VISIBLE : View.GONE));
+        customCa.setOnCheckedChangeListener((button, checked) -> {
+            caPem.setVisibility(checked ? View.VISIBLE : View.GONE);
+            if (checked) BladeMotion.selected(caPem);
+        });
         add(content, customCa, 4);
         caPem = field("Вставьте сертификат целиком", true);
         caPem.setVisibility(View.GONE);
@@ -125,13 +138,13 @@ public final class ProfileEditorActivity extends Activity {
         save.setAllCaps(false);
         save.setTextSize(16);
         save.setTypeface(BOLD);
-        save.setTextColor(BACKGROUND);
+        save.setTextColor(BladeAppearance.onAccent(this));
         save.setMinHeight(dp(54));
         save.setStateListAnimator(null);
         save.setBackground(new android.graphics.drawable.RippleDrawable(
             android.content.res.ColorStateList.valueOf(0x280b121a),
             surface(MINT, 18, 0), null));
-        save.setOnClickListener(view -> save());
+        BladeMotion.bind(save, this::save);
         add(content, save, 24);
 
         if (existing != null) {
@@ -146,11 +159,16 @@ public final class ProfileEditorActivity extends Activity {
             delete.setBackground(new android.graphics.drawable.RippleDrawable(
                 android.content.res.ColorStateList.valueOf(0x30ffffff),
                 surface(SURFACE, 16, BORDER), null));
-            delete.setOnClickListener(view -> confirmDelete());
+            BladeMotion.bind(delete, this::confirmDelete);
             add(content, delete, 10);
             editingMarker = existing.marker;
             fill(existing);
         }
+        BladeMotion.enter(content);
+    }
+
+    @Override public void onBackPressed() {
+        BladeMotion.finish(this);
     }
 
     private void fill(ProfileStore.Profile profile) {
@@ -168,7 +186,8 @@ public final class ProfileEditorActivity extends Activity {
     private void fillFromLink() {
         String source = link.getText().toString().replaceAll("\\s+", "");
         if (source.isEmpty()) {
-            toast("Поле ссылки пустое");
+            link.setError("Вставьте ссылку sslim://");
+            link.requestFocus();
             return;
         }
         try {
@@ -184,26 +203,48 @@ public final class ProfileEditorActivity extends Activity {
     private void save() {
         try {
             String hostValue = host.getText().toString().trim();
-            if (hostValue.isEmpty()) throw new IllegalArgumentException("Заполните адрес сервера");
+            if (hostValue.isEmpty()) {
+                fieldError(host, "Заполните адрес сервера");
+                return;
+            }
             String portValue = port.getText().toString().trim();
-            int portNumber = portValue.isEmpty() ? 9443 : Integer.parseInt(portValue);
-            if (portNumber < 1 || portNumber > 65535) throw new IllegalArgumentException("Неверный порт");
+            int portNumber;
+            try {
+                portNumber = portValue.isEmpty() ? 9443 : Integer.parseInt(portValue);
+            } catch (NumberFormatException error) {
+                fieldError(port, "Введите порт от 1 до 65535");
+                return;
+            }
+            if (portNumber < 1 || portNumber > 65535) {
+                fieldError(port, "Введите порт от 1 до 65535");
+                return;
+            }
             String sniValue = sni.getText().toString().trim();
             if (sniValue.isEmpty()) sniValue = hostValue;
-            byte[] key = Base64.getMimeDecoder().decode(secret.getText().toString().trim());
-            if (key.length < 32) throw new IllegalArgumentException("Секрет короче 32 байт");
+            byte[] key;
+            try {
+                key = Base64.getMimeDecoder().decode(secret.getText().toString().trim());
+            } catch (IllegalArgumentException error) {
+                fieldError(secret, "Неверный Base64 ключ");
+                return;
+            }
+            if (key.length < 32) {
+                fieldError(secret, "Секрет должен содержать не меньше 32 байт");
+                return;
+            }
             String nameValue = name.getText().toString().trim();
             if (nameValue.isEmpty()) nameValue = hostValue;
             String ca = customCa.isChecked() ? caPem.getText().toString().trim() : null;
             if (customCa.isChecked() && (ca == null || !ca.contains("BEGIN CERTIFICATE"))) {
-                throw new IllegalArgumentException("PEM-сертификат не похож на сертификат");
+                fieldError(caPem, "Вставьте действительный PEM-сертификат");
+                return;
             }
             ProfileStore.Profile profile = new ProfileStore.Profile(
                 editingId == null ? ProfileStore.newId() : editingId,
                 nameValue, hostValue, portNumber, sniValue, editingMarker, key, ca);
             ProfileStore.save(this, profile);
             setResult(RESULT_OK);
-            finish();
+            BladeMotion.finish(this);
         } catch (IllegalArgumentException error) {
             toast(error.getMessage());
         } catch (Exception error) {
@@ -212,19 +253,26 @@ public final class ProfileEditorActivity extends Activity {
     }
 
     private void confirmDelete() {
-        new AlertDialog.Builder(this)
+        BladeMotion.show(BladeMotion.builder(this)
             .setTitle("Удалить профиль?")
             .setPositiveButton("Удалить", (dialog, which) -> {
                 ProfileStore.delete(this, editingId);
                 setResult(RESULT_OK);
-                finish();
+                BladeMotion.finish(this);
             })
             .setNegativeButton("Отмена", null)
-            .show();
+            .create());
     }
 
     private void toast(String message) {
         Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+    }
+
+    /** Keep the editing context visible instead of reporting a generic toast. */
+    private void fieldError(EditText field, String message) {
+        field.setError(message);
+        field.requestFocus();
+        BladeMotion.state(field);
     }
 
     private TextView caption(String text) {
@@ -240,6 +288,9 @@ public final class ProfileEditorActivity extends Activity {
         view.setTextSize(14);
         view.setBackground(surface(SURFACE, 14, BORDER));
         view.setPadding(dp(14), dp(12), dp(14), dp(12));
+        view.setOnFocusChangeListener((v, focused) ->
+            view.setBackground(surface(focused ? BladeAppearance.selected(this) : SURFACE,
+                14, focused ? MINT : BORDER)));
         if (multiline) {
             view.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
             view.setMinLines(multiline ? 2 : 1);

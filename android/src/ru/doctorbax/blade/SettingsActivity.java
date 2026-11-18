@@ -19,22 +19,44 @@ import android.widget.TextView;
 
 /** Two-level settings: profiles and real application preferences. */
 public final class SettingsActivity extends Activity {
-    private static final int BG = 0xff0b121a;
-    private static final int SURFACE = 0xff111e2a;
-    private static final int BORDER = 0xff263746;
-    private static final int WHITE = 0xffeff9f6;
-    private static final int MUTED = 0xffacbfcc;
-    private static final int MINT = 0xffb7f4cd;
+    private int BG;
+    private int SURFACE;
+    private int BORDER;
+    private int WHITE;
+    private int MUTED;
+    private int MINT;
+    private String appearanceStamp;
+
+    private void loadPalette() {
+        BG = BladeAppearance.background(this);
+        SURFACE = BladeAppearance.surface(this);
+        BORDER = BladeAppearance.border(this);
+        WHITE = BladeAppearance.text(this);
+        MUTED = BladeAppearance.muted(this);
+        MINT = BladeAppearance.accent(this);
+        appearanceStamp = BladeAppearance.stamp(this);
+    }
     private static final Typeface BOLD = Typeface.create("sans-serif-medium", Typeface.NORMAL);
     private boolean showingOptions;
+    private boolean previousSection;
+    private ScrollView visibleScroll;
 
     @Override public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         if (Build.VERSION.SDK_INT >= 30) getWindow().setDecorFitsSystemWindows(false);
-        getWindow().setStatusBarColor(BG);
-        getWindow().setNavigationBarColor(BG);
+        loadPalette();
+        BladeAppearance.applyWindow(this);
         showingOptions = savedInstanceState != null && savedInstanceState.getBoolean("options");
         render();
+    }
+
+    @Override protected void onResume() {
+        super.onResume();
+        if (!BladeAppearance.stamp(this).equals(appearanceStamp)) {
+            loadPalette();
+            BladeAppearance.applyWindow(this);
+            render();
+        }
     }
 
     @Override protected void onSaveInstanceState(Bundle out) {
@@ -47,7 +69,7 @@ public final class SettingsActivity extends Activity {
             showingOptions = false;
             render();
         } else {
-            super.onBackPressed();
+            BladeMotion.finish(this);
         }
     }
 
@@ -85,6 +107,10 @@ public final class SettingsActivity extends Activity {
     }
 
     private void render() {
+        boolean first = visibleScroll == null;
+        boolean sectionChanged = !first && showingOptions != previousSection;
+        final int previousY = !first && !sectionChanged ? visibleScroll.getScrollY() : 0;
+        previousSection = showingOptions;
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
         scroll.setBackgroundColor(BG);
@@ -100,12 +126,13 @@ public final class SettingsActivity extends Activity {
         LinearLayout content = column();
         content.setPadding(dp(24), dp(22), dp(24), dp(26));
         scroll.addView(content);
-        setContentView(scroll);
+        BladeMotion.mount(this, scroll);
+        visibleScroll = scroll;
 
         TextView back = text("‹", 36, MINT, false);
         back.setGravity(Gravity.CENTER_VERTICAL);
         back.setContentDescription("Назад");
-        back.setOnClickListener(view -> onBackPressed());
+        BladeMotion.bind(back, this::onBackPressed);
         LinearLayout header = new LinearLayout(this);
         header.setGravity(Gravity.CENTER_VERTICAL);
         header.addView(back, new LinearLayout.LayoutParams(dp(42), dp(48)));
@@ -122,6 +149,9 @@ public final class SettingsActivity extends Activity {
                     showingOptions = true;
                     render();
                 }), 12);
+            add(content, item("Оформление",
+                "Цветовые темы, акценты, анимации и интерактивный предпросмотр",
+                () -> startActivity(new Intent(this, AppearanceActivity.class))), 12);
         } else {
             add(content, text("СОЕДИНЕНИЕ", 12, MINT, true), 20);
             add(content, toggle("Автоматически переподключаться",
@@ -132,6 +162,9 @@ public final class SettingsActivity extends Activity {
             add(content, item("DNS-серверы",
                 BladeOptions.dnsName(this) + " · применяется после переподключения",
                 this::chooseDns), 12);
+            add(content, item("Транспорт подключения",
+                BladeOptions.transportName(this) + " · применяется после переподключения",
+                this::chooseTransport), 12);
 
             add(content, text("БЕЗОПАСНОСТЬ", 12, MINT, true), 24);
             add(content, item("Kill switch",
@@ -148,7 +181,14 @@ public final class SettingsActivity extends Activity {
                 "Показывать BladePerf в logcat для поиска проблем со скоростью",
                 BladeOptions.diagnostics(this),
                 checked -> BladeOptions.setDiagnostics(this, checked)), 10);
+
+            add(content, text("ОБНОВЛЕНИЯ", 12, MINT, true), 24);
+            add(content, item("Проверить обновления",
+                "Только по нажатию · GitHub Releases · без автозагрузки APK",
+                () -> BladeUpdates.check(this)), 10);
         }
+        if (previousY > 0) scroll.post(() -> scroll.scrollTo(0, previousY));
+        if (first || sectionChanged) BladeMotion.enter(content);
     }
 
     private View item(String title, String subtitle, Runnable click) {
@@ -158,7 +198,7 @@ public final class SettingsActivity extends Activity {
         row.setClickable(true);
         row.setFocusable(true);
         row.setContentDescription(title + ". " + subtitle);
-        row.setOnClickListener(view -> click.run());
+        BladeMotion.bind(row, click);
         add(row, text(title + "  ›", 16, WHITE, true), 0);
         add(row, text(subtitle, 12, MUTED, false), 5);
         return row;
@@ -176,12 +216,41 @@ public final class SettingsActivity extends Activity {
         add(words, text(subtitle, 12, MUTED, false), 5);
         row.addView(words, new LinearLayout.LayoutParams(0, -2, 1f));
         Switch control = new Switch(this);
+        control.setThumbTintList(android.content.res.ColorStateList.valueOf(MINT));
         control.setContentDescription(title);
         control.setChecked(current);
         control.setOnCheckedChangeListener((button, checked) -> action.changed(checked));
         row.addView(control);
-        row.setOnClickListener(view -> control.setChecked(!control.isChecked()));
+        BladeMotion.bind(row, () -> control.setChecked(!control.isChecked()));
         return row;
+    }
+
+    /** An explicit choice is retained; Auto never falls back on certificate or auth errors. */
+    private void chooseTransport() {
+        String[] names = {
+            "Авто — сначала QUIC/UDP, затем TCP при недоступности UDP",
+            "TCP/TLS — старый совместимый транспорт",
+            "QUIC/UDP — только новый транспорт, без TCP fallback"
+        };
+        String[] values = {
+            BladeOptions.TRANSPORT_AUTO, BladeOptions.TRANSPORT_TCP,
+            BladeOptions.TRANSPORT_QUIC
+        };
+        String current = BladeOptions.transport(this);
+        int selected = 0;
+        for (int i = 0; i < values.length; i++) {
+            if (values[i].equals(current)) selected = i;
+        }
+        BladeMotion.show(BladeMotion.builder(this)
+            .setTitle("Выбор транспорта")
+            .setSingleChoiceItems(names, selected, (dialog, which) -> {
+                BladeOptions.setTransport(this, values[which]);
+                dialog.dismiss();
+                render();
+            })
+            .setMessage(null)
+            .setNegativeButton("Отмена", null)
+            .create());
     }
 
     private void chooseDns() {
@@ -193,7 +262,7 @@ public final class SettingsActivity extends Activity {
         for (int i = 0; i < values.length; i++) {
             if (values[i].equals(current)) selected = i;
         }
-        new AlertDialog.Builder(this)
+        BladeMotion.show(BladeMotion.builder(this)
             .setTitle("DNS-серверы")
             .setSingleChoiceItems(names, selected, (dialog, which) -> {
                 BladeOptions.setDns(this, values[which]);
@@ -201,11 +270,11 @@ public final class SettingsActivity extends Activity {
                 render();
             })
             .setNegativeButton("Отмена", null)
-            .show();
+            .create());
     }
 
     private void showKillSwitchGuide() {
-        new AlertDialog.Builder(this)
+        BladeMotion.show(BladeMotion.builder(this)
             .setTitle("Kill switch — системная защита")
             .setMessage("Android обеспечивает надёжную блокировку трафика даже при "
                 + "сбое Blade. Откройте настройки VPN, нажмите на Blade "
@@ -222,6 +291,6 @@ public final class SettingsActivity extends Activity {
                 }
             })
             .setNegativeButton("Закрыть", null)
-            .show();
+            .create());
     }
 }

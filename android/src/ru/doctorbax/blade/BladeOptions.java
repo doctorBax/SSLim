@@ -24,6 +24,31 @@ final class BladeOptions {
         prefs(context).edit().putBoolean("autoReconnect", value).apply();
     }
 
+    static final String TRANSPORT_AUTO = "auto";
+    static final String TRANSPORT_TCP = "tcp";
+    static final String TRANSPORT_QUIC = "quic";
+
+    static String transport(Context context) {
+        String value = prefs(context).getString("transport", TRANSPORT_AUTO);
+        if (TRANSPORT_TCP.equals(value) || TRANSPORT_QUIC.equals(value)) return value;
+        return TRANSPORT_AUTO;
+    }
+
+    static void setTransport(Context context, String value) {
+        if (TRANSPORT_AUTO.equals(value) || TRANSPORT_TCP.equals(value)
+            || TRANSPORT_QUIC.equals(value)) {
+            prefs(context).edit().putString("transport", value).apply();
+        }
+    }
+
+    static String transportName(Context context) {
+        switch (transport(context)) {
+            case TRANSPORT_TCP: return "TCP/TLS (совместимый)";
+            case TRANSPORT_QUIC: return "UDP/QUIC (только)";
+            default: return "Авто: QUIC → TCP";
+        }
+    }
+
     static boolean diagnostics(Context context) {
         return prefs(context).getBoolean("diagnostics", false);
     }

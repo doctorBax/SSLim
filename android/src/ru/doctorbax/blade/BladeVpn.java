@@ -49,6 +49,7 @@ public final class BladeVpn extends VpnService {
     static volatile boolean running;
     static volatile String status = "Отключено";
     static volatile String activeName = "";
+    static volatile String activeTransport = "TCP/TLS";
     static final String DISCONNECT = "ru.doctorbax.blade.DISCONNECT";
 
     private static final int[] QUICK_DELAYS_MS = {250, 750, 1500};
@@ -236,7 +237,80 @@ public final class BladeVpn extends VpnService {
         return delay;
     }
 
+    /**
+     * Auto negotiates QUIC v3 via a real authenticated QUIC/TLS handshake.
+     * Only an unavailable UDP path triggers TCP fallback. Certificate or HMAC
+     * errors never downgrade to another transport.
+     */
     private void runSession() throws Exception {
+        String preferred = BladeOptions.transport(this);
+        if (BladeOptions.TRANSPORT_TCP.equals(preferred)) {
+            runTcpSession();
+            return;
+        }
+        if (!BladeQuic.available()) {
+            if (BladeOptions.TRANSPORT_QUIC.equals(preferred)) {
+                throw new IOException("QUIC native library is not installed in Blade");
+            }
+            runTcpSession();
+            return;
+        }
+        phase = "подключение UDP/QUIC v3";
+        int outcome;
+        try {
+            outcome = BladeQuic.connect(this, config);
+        } finally {
+            // A failed/restarting native session must not leave a previous
+            // Android VPN descriptor open during a subsequent TCP fallback.
+            closeResources();
+        }
+        if (outcome == BladeQuic.UNAVAILABLE) {
+            if (BladeOptions.TRANSPORT_QUIC.equals(preferred)) {
+                throw new IOException("UDP/QUIC v3 недоступен на этом сервере или в сети");
+            }
+            if (stopping) return;
+            Log.i("Blade", "QUIC v3 unavailable: using authenticated TCP v1");
+            status = "UDP недоступен, подключаемся через TCP…";
+            runTcpSession();
+            return;
+        }
+        if (!stopping) throw new IOException("UDP/QUIC session ended unexpectedly");
+    }
+
+    /**
+     * Called from the protected native QUIC engine after server authentication.
+     * QUIC receives its own per-client address, allocated by the same server
+     * allocator as TCP. Do not establish TUN before proving server identity.
+     */
+    private synchronized int onNativeQuicConnected(String address) throws IOException {
+        if (stopping) return -1;
+        if (!address.matches("10\\.253\\.[0-9]{1,3}\\.[0-9]{1,3}")) {
+            throw new IOException("Invalid QUIC-assigned address");
+        }
+        String[] dns = BladeOptions.dnsServers(this);
+        ParcelFileDescriptor device = new Builder().setSession("Blade • QUIC")
+            .setMtu(MTU).addAddress(address, 32)
+            .addRoute("0.0.0.0", 0)
+            .addDnsServer(dns[0]).addDnsServer(dns[1])
+            .setBlocking(false).establish();
+        if (device == null) throw new IOException("VPN permission revoked");
+        tun = device;
+        traffic = new Traffic();
+        activeTransport = "UDP/QUIC";
+        status = "VPN подключён";
+        phase = "передача UDP/QUIC";
+        return device.getFd();
+    }
+
+    private void onNativeQuicStats(long uploaded, long downloaded, long rttMillis) {
+        Traffic counters = traffic;
+        counters.upload.set(uploaded);
+        counters.download.set(downloaded);
+        counters.rttMs = rttMillis;
+        counters.rttSampleTime = SystemClock.elapsedRealtime();
+    }
+
+    private void runTcpSession() throws Exception {
         ProfileStore.Profile profile = config;
         phase = "соединение с сервером";
         try (Socket raw = new Socket()) {
@@ -292,6 +366,7 @@ public final class BladeVpn extends VpnService {
                     tun = device;
                     sessionOutput = output;
                     traffic = counters;
+                    activeTransport = "TCP/TLS";
                     status = "VPN подключён";
                 }
                 phase = "передача данных";
@@ -570,6 +645,7 @@ public final class BladeVpn extends VpnService {
     }
 
     private void disconnect() {
+        BladeQuic.stop();
         final DataOutputStream output;
         synchronized (this) {
             if (stopping) return;
@@ -610,6 +686,7 @@ public final class BladeVpn extends VpnService {
     @Override public void onDestroy() {
         handler.removeCallbacksAndMessages(null);
         stopping = true;
+        BladeQuic.stop();
         handler.removeCallbacks(forceClose);
         closeResources();
         if (status.equals("VPN подключён") || status.equals("Подключение…") || status.equals("Отключение…")) status = "Отключено";

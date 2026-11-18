@@ -17,7 +17,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --locked
+      - name: Verify Android menu and animation contracts
+        run: python3 scripts/test-android-motion.py
       - run: cargo build --release --locked
+      - name: Verify nested interactive CLI menu (PTY)
+        run: python3 scripts/test-cli-menu.py target/release/sslim
       - name: Verify concurrent Linux tunnels
         run: sudo unshare --net python3 scripts/test-multi-tun.py target/release/sslim
       - run: tar -czf sslim-linux-x86_64.tar.gz -C target/release sslim
@@ -46,10 +50,42 @@ jobs:
         with:
           name: sslim-windows-x86_64
           path: sslim-windows-x86_64.zip
-  android:
-    runs-on: windows-latest
+  android-quic-native:
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,x86_64-linux-android
+      - name: Test shared QUIC codec and JNI bridge
+        run: cargo test --manifest-path android/native/Cargo.toml
+      - name: Install Android NDK
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_HOME" 'ndk;27.2.12479018'
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+      - name: Build protected Android QUIC libraries
+        env:
+          RUSTFLAGS: "-C link-arg=-Wl,-z,max-page-size=16384"
+        run: |
+          cargo install cargo-ndk --locked
+          cargo ndk -t arm64-v8a -t x86_64 -o android/jniLibs build --manifest-path android/native/Cargo.toml --release
+          test -s android/jniLibs/arm64-v8a/libbladequic.so
+          test -s android/jniLibs/x86_64/libbladequic.so
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Blade-QUIC-native
+          path: android/jniLibs/
+          if-no-files-found: error
+
+  android:
+    runs-on: windows-latest
+    needs: android-quic-native
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: Blade-QUIC-native
+          path: android/jniLibs
       - uses: actions/setup-java@v4
         with:
           distribution: temurin

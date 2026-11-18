@@ -3,6 +3,7 @@
 import hashlib
 import hmac
 import ipaddress
+import re
 import os
 from pathlib import Path
 import socket
@@ -79,7 +80,7 @@ def main():
         context.minimum_version = ssl.TLSVersion.TLSv1_3
         with subprocess.Popen([
             str(binary), "server", "--device", "tun", "--multi-tun", "--cert", str(cert),
-            "--key", str(tls_key), "--secret-file", str(session_key),
+            "--key", str(tls_key), "--secret-file", str(session_key), "--udp-port", "9443",
         ]) as server:
             try:
                 deadline = time.monotonic() + 5
@@ -100,7 +101,16 @@ def main():
                         send_ping(second, second_ip, 2)
                         check_reply(second, second_ip, 2)
                         check_reply(first, first_ip, 1)
-                print("Two concurrent sessions on the same key passed independent IPv4 traffic.")
+                        v3 = subprocess.run([
+                            str(binary), "quic", "probe-v3",
+                            "--address", "127.0.0.1:9443", "--server-name", "localhost",
+                            "--ca", str(cert), "--secret-file", str(session_key),
+                        ], capture_output=True, text=True, check=True, timeout=20)
+                        match = re.search(r"assigned IP: ([0-9.]+)", v3.stdout)
+                        assert match, (v3.stdout, v3.stderr)
+                        udp_ip = ipaddress.IPv4Address(match.group(1))
+                        assert udp_ip not in (first_ip, second_ip)
+                print("Two concurrent TCP sessions plus QUIC v3 passed independent IPv4 traffic.")
             finally:
                 server.terminate()
 

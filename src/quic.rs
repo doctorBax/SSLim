@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::net::{SocketAddr, ToSocketAddrs, Ipv4Addr};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -19,6 +19,8 @@ use crate::tun::Tun;
 use crate::{client_config, client_tls, server_config};
 
 const ALPN: &[u8] = b"sslim/2";
+const ALPN_V3: &[u8] = b"sslim/3";
+const AUTH_LABEL_V3: &[u8] = b"EXPORTER-SSLim-v3-auth";
 const AUTH_LABEL: &[u8] = b"EXPORTER-SSLim-v2-auth";
 const MTU: usize = 1280;
 const FRAGMENT: usize = 1024;
@@ -62,6 +64,17 @@ enum Action {
         fallback_tcp_port: Option<u16>,
     },
     Probe {
+        #[arg(long)]
+        address: SocketAddr,
+        #[arg(long)]
+        server_name: String,
+        #[arg(long)]
+        ca: Option<PathBuf>,
+        #[arg(long)]
+        secret_file: PathBuf,
+    },
+    /// Verify v3 authentication, dynamic IPv4 allocation and ICMP echo
+    ProbeV3 {
         #[arg(long)]
         address: SocketAddr,
         #[arg(long)]
@@ -361,6 +374,190 @@ pub async fn run(args: Args) -> Result<()> {
             endpoint.wait_idle().await;
             Ok(())
         }
+        Action::ProbeV3 {
+            address,
+            server_name,
+            ca,
+            secret_file,
+        } => probe_v3(address, &server_name, ca.as_deref(), &secret_file).await,
+    }
+}
+
+fn checksum(bytes: &[u8]) -> [u8; 2] {
+    let mut sum = 0u32;
+    for chunk in bytes.chunks(2) {
+        sum += u32::from(chunk[0]) << 8
+            | u32::from(*chunk.get(1).unwrap_or(&0));
+    }
+    while sum >> 16 != 0 { sum = (sum & 0xffff) + (sum >> 16); }
+    (!(sum as u16)).to_be_bytes()
+}
+
+/// QUIC v3 integration probe. Used by the Linux network namespace smoke
+/// test to verify the full transport, not merely that UDP can bind.
+async fn probe_v3(
+    address: SocketAddr,
+    server_name: &str,
+    ca: Option<&std::path::Path>,
+    secret_file: &std::path::Path,
+) -> Result<()> {
+    let key = read_key(secret_file)?;
+    let mut tls = client_config(ca)?;
+    tls.alpn_protocols = vec![ALPN_V3.to_vec()];
+    let mut config = quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(tls)?));
+    config.transport_config(transport());
+    let bind = if address.is_ipv4() { "0.0.0.0:0" } else { "[::]:0" };
+    let mut endpoint = Endpoint::client(bind.parse()?)?;
+    endpoint.set_default_client_config(config);
+    let conn = timeout(OPERATION_TIMEOUT, endpoint.connect(address, server_name)?).await??;
+    let mut material = [0u8; 32];
+    conn.export_keying_material(&mut material, AUTH_LABEL_V3, ALPN_V3)
+        .map_err(|_| anyhow::anyhow!("QUIC v3 exporter unavailable"))?;
+    let proof = hmac::sign(&key, &material);
+    let (mut writer, mut reader) = timeout(OPERATION_TIMEOUT, conn.open_bi()).await??;
+    writer.write_all(proof.as_ref()).await?;
+    writer.finish()?;
+    let mut response = [0u8; 5];
+    timeout(OPERATION_TIMEOUT, reader.read_exact(&mut response)).await??;
+    ensure!(response[0] == 1, "QUIC v3 authentication rejected");
+    let assigned = Ipv4Addr::from([response[1], response[2], response[3], response[4]]);
+    ensure!(response[1] == 10 && response[2] == 253,
+        "QUIC v3 returned unexpected assigned IP");
+
+    let mut packet = [0u8; 28];
+    packet[0] = 0x45;
+    packet[2..4].copy_from_slice(&(28u16).to_be_bytes());
+    packet[8] = 64;
+    packet[9] = 1;
+    packet[12..16].copy_from_slice(&assigned.octets());
+    packet[16..20].copy_from_slice(&[10, 253, 0, 1]);
+    packet[20] = 8;
+    packet[24..26].copy_from_slice(&25u16.to_be_bytes());
+    packet[26..28].copy_from_slice(&1u16.to_be_bytes());
+    let icmp_sum = checksum(&packet[20..]);
+    packet[22..24].copy_from_slice(&icmp_sum);
+    let ip_sum = checksum(&packet[..20]);
+    packet[10..12].copy_from_slice(&ip_sum);
+
+    let mut seq = 0;
+    send_packet(&conn, &mut seq, &packet).await?;
+    let mut datagrams = DatagramReader::new();
+    let reply = timeout(OPERATION_TIMEOUT, datagrams.read(&conn)).await??;
+    ensure!(reply.len() == 28 && reply[16..20] == assigned.octets()
+        && reply[20] == 0, "QUIC v3 IPv4 echo reply mismatch");
+    println!("QUIC v3 authenticated echo OK, assigned IP: {assigned}");
+    conn.close(0u32.into(), b"done");
+    endpoint.wait_idle().await;
+    Ok(())
+}
+
+/// Parallel QUIC v3 listener for the ordinary TCP server.
+///
+/// v2 experimental standalone QUIC is intentionally unchanged. v3 shares the
+/// TCP server's key ring and address allocator, so a profile can be used on
+/// both transports without colliding peer TUN interfaces.
+pub fn start_shared(
+    host: &str,
+    port: u16,
+    cert: &std::path::Path,
+    key: &std::path::Path,
+    shared: Arc<crate::session::Server>,
+) -> Result<tokio::task::JoinHandle<()>> {
+    let addr = (host, port)
+        .to_socket_addrs()?
+        .next()
+        .context("UDP listen address not resolved")?;
+    let mut tls = server_config(cert, key)?;
+    tls.alpn_protocols = vec![ALPN_V3.to_vec()];
+    let mut config = quinn::ServerConfig::with_crypto(
+        Arc::new(QuicServerConfig::try_from(tls)?),
+    );
+    config.transport_config(transport());
+    // Validate binding at startup so a requested UDP service cannot silently
+    // fail while an operator assumes it is available.
+    let endpoint = Endpoint::server(config, addr)?;
+    println!("SSLim QUIC v3 listening on UDP {}", endpoint.local_addr()?);
+    let permits = Arc::new(Semaphore::new(128));
+    Ok(tokio::spawn(async move {
+        while let Some(incoming) = endpoint.accept().await {
+            let Ok(permit) = permits.clone().try_acquire_owned() else {
+                incoming.refuse();
+                continue;
+            };
+            let server = shared.clone();
+            tokio::spawn(async move {
+                let _permit = permit;
+                match timeout(OPERATION_TIMEOUT, incoming).await {
+                    Ok(Ok(conn)) => {
+                        if let Err(error) = shared_session(conn, server).await {
+                            eprintln!("QUIC v3 session error: {error:#}");
+                        }
+                    }
+                    Ok(Err(error)) => eprintln!("QUIC v3 handshake error: {error}"),
+                    Err(_) => {}
+                }
+            });
+        }
+    }))
+}
+
+async fn shared_session(
+    conn: Connection,
+    server: Arc<crate::session::Server>,
+) -> Result<()> {
+    let (mut response, mut proof_stream) = timeout(OPERATION_TIMEOUT, conn.accept_bi()).await??;
+    let mut proof = [0u8; 32];
+    timeout(OPERATION_TIMEOUT, proof_stream.read_exact(&mut proof)).await??;
+    let mut material = [0u8; 32];
+    conn.export_keying_material(&mut material, AUTH_LABEL_V3, ALPN_V3)
+        .map_err(|_| anyhow::anyhow!("QUIC v3 TLS exporter unavailable"))?;
+    let ring = server
+        .secrets_file
+        .as_deref()
+        .map(crate::auth::KeyRing::from_file)
+        .transpose()?;
+    let ring = ring.as_ref().unwrap_or(&server.ring);
+    ensure!(ring.verify_quic_exporter(&material, &proof),
+        "QUIC v3 authentication denied");
+    let (address, tun) = server.allocate_peer_tun().await?;
+    let mut ack = [0u8; 5];
+    ack[0] = 1;
+    ack[1..].copy_from_slice(&address.octets());
+    response.write_all(&ack).await?;
+    response.finish()?;
+    pump_addressed(&conn, tun, address).await
+}
+
+async fn pump_addressed(conn: &Connection, tun: Tun, address: Ipv4Addr) -> Result<()> {
+    let ip = address.octets();
+    let client_to_server = async {
+        let mut packets = DatagramReader::new();
+        loop {
+            let packet = packets.read(conn).await?;
+            // Restrict each peer to its dynamically allocated source IP.
+            ensure!(packet.len() >= 20 && (packet[0] >> 4) == 4,
+                "QUIC v3 supports IPv4 peer TUN packets only");
+            if packet[12..16] == ip {
+                tun.write(&packet).await?;
+            }
+        }
+    };
+    let server_to_client = async {
+        let mut seq = 0u32;
+        let mut buffer = [0u8; MTU + 1];
+        loop {
+            let size = tun.read(&mut buffer).await?;
+            if size <= MTU && size >= 20
+                && (buffer[0] >> 4) == 4
+                && buffer[16..20] == ip && valid_ip(&buffer[..size])
+            {
+                send_packet(conn, &mut seq, &buffer[..size]).await?;
+            }
+        }
+    };
+    tokio::select! {
+        result = client_to_server => result,
+        result = server_to_client => result,
     }
 }
 

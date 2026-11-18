@@ -167,8 +167,24 @@ fn profile_path(name: &str) -> Result<PathBuf> {
 pub fn save(profile: &Profile) -> Result<PathBuf> {
     profile.validate()?;
     let path = profile_path(&profile.name)?;
-    fs::write(&path, toml::to_string_pretty(profile)?)
-        .with_context(|| format!("writing {}", path.display()))?;
+    let serialized = toml::to_string_pretty(profile)?;
+    #[cfg(unix)]
+    {
+        // Imported URI profiles contain live VPN secrets. The default 0644
+        // permissions from fs::write would expose them to other local users.
+        use std::io::Write;
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let mut options = fs::OpenOptions::new();
+        let mut file = options.write(true).create(true).truncate(true).mode(0o600)
+            .open(&path).with_context(|| format!("writing {}", path.display()))?;
+        file.set_permissions(fs::Permissions::from_mode(0o600))?;
+        file.write_all(serialized.as_bytes())?;
+    }
+    #[cfg(not(unix))]
+    {
+        fs::write(&path, serialized)
+            .with_context(|| format!("writing {}", path.display()))?;
+    }
     Ok(path)
 }
 

@@ -24,13 +24,23 @@ import java.util.List;
 
 /** Manage all existing profiles, import and edit flows without migrating stored data. */
 public final class ProfilesActivity extends Activity {
-    private static final int BACKGROUND = 0xff0b121a;
-    private static final int SURFACE = 0xff111e2a;
-    private static final int BORDER = 0xff263746;
-    private static final int WHITE = 0xffeff9f6;
-    private static final int MUTED = 0xffacbfcc;
-    private static final int MINT = 0xffb7f4cd;
-    private static final int CORAL = 0xffffb4a8;
+    private int BACKGROUND;
+    private int SURFACE;
+    private int BORDER;
+    private int WHITE;
+    private int MUTED;
+    private int MINT;
+    private int CORAL;
+
+    private void loadPalette() {
+        BACKGROUND = BladeAppearance.background(this);
+        SURFACE = BladeAppearance.surface(this);
+        BORDER = BladeAppearance.border(this);
+        WHITE = BladeAppearance.text(this);
+        MUTED = BladeAppearance.muted(this);
+        MINT = BladeAppearance.accent(this);
+        CORAL = BladeAppearance.danger(this);
+    }
     private static final int REQUEST_EDIT = 2;
     private static final Typeface MEDIUM = Typeface.create("sans-serif-medium", Typeface.NORMAL);
     private static final Typeface BOLD = Typeface.create("sans-serif", Typeface.BOLD);
@@ -43,9 +53,9 @@ public final class ProfilesActivity extends Activity {
     @Override public void onCreate(Bundle savedState) {
         super.onCreate(savedState);
         if (Build.VERSION.SDK_INT >= 30) getWindow().setDecorFitsSystemWindows(false);
-        getWindow().setStatusBarColor(BACKGROUND);
-        getWindow().setNavigationBarColor(BACKGROUND);
-        getWindow().getDecorView().setSystemUiVisibility(0);
+        loadPalette();
+        BladeAppearance.applyWindow(this);
+
 
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
@@ -63,14 +73,14 @@ public final class ProfilesActivity extends Activity {
         LinearLayout content = column();
         content.setPadding(dp(24), dp(24), dp(24), dp(24));
         scroll.addView(content);
-        setContentView(scroll);
+        BladeMotion.mount(this, scroll);
 
         LinearLayout header = new LinearLayout(this);
         header.setGravity(Gravity.CENTER_VERTICAL);
         ImageView back = iconButton(R.drawable.ic_arrow_right, 40, MINT, SURFACE, 12);
         back.setRotation(180);
         back.setContentDescription("Назад");
-        back.setOnClickListener(view -> finish());
+        BladeMotion.bind(back, () -> BladeMotion.finish(this));
         header.addView(back, new LinearLayout.LayoutParams(dp(40), dp(40)));
         TextView title = label("Профили", 20, WHITE, BOLD);
         LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(0, -2, 1f);
@@ -90,7 +100,7 @@ public final class ProfilesActivity extends Activity {
         endpoint.setBackground(surface(SURFACE, 20, BORDER));
         endpoint.setPadding(dp(16), dp(12), dp(16), dp(12));
         endpoint.setClickable(true);
-        endpoint.setOnClickListener(view -> showProfilesDialog());
+        BladeMotion.bind(endpoint, this::showProfilesDialog);
         LinearLayout server = column();
         server.addView(label("ТЕКУЩИЙ СЕРВЕР", 10, MUTED, MEDIUM));
         activeName = label("—", 16, WHITE, BOLD);
@@ -107,12 +117,12 @@ public final class ProfilesActivity extends Activity {
         add(content, caption("ДОБАВИТЬ СЕРВЕР"), 22);
         LinearLayout actions = new LinearLayout(this);
         Button paste = pill("Вставить ссылку");
-        paste.setOnClickListener(view -> importFromClipboard());
+        BladeMotion.bind(paste, this::importFromClipboard);
         actions.addView(paste, new LinearLayout.LayoutParams(0, -2, 1f));
         LinearLayout.LayoutParams gap = new LinearLayout.LayoutParams(dp(10), 0);
         actions.addView(new View(this), gap);
         Button create = pill("Добавить вручную");
-        create.setOnClickListener(view -> openEditor(null));
+        BladeMotion.bind(create, () -> openEditor(null));
         actions.addView(create, new LinearLayout.LayoutParams(0, -2, 1f));
         add(content, actions, 8);
 
@@ -132,6 +142,11 @@ public final class ProfilesActivity extends Activity {
             12, MUTED, null);
         hint.setLineSpacing(dp(3), 1);
         add(content, hint, 18);
+        BladeMotion.enter(content);
+    }
+
+    @Override public void onBackPressed() {
+        BladeMotion.finish(this);
     }
 
     @Override protected void onResume() {
@@ -160,15 +175,16 @@ public final class ProfilesActivity extends Activity {
             profileList.addView(profileRow(profile, isActive),
                 new LinearLayout.LayoutParams(-1, -2) {{ topMargin = dp(8); }});
         }
+        BladeMotion.enter(profileList);
     }
 
     private LinearLayout profileRow(ProfileStore.Profile profile, boolean isActive) {
         LinearLayout row = new LinearLayout(this);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(dp(16), dp(12), dp(16), dp(12));
-        row.setBackground(surface(isActive ? 0xff17342a : SURFACE, 16, BORDER));
+        row.setBackground(surface(isActive ? BladeAppearance.selected(this) : SURFACE, 16, BORDER));
         row.setClickable(true);
-        row.setOnClickListener(view -> {
+        BladeMotion.bind(row, () -> {
             ProfileStore.setActive(this, profile.id);
             render();
             toast("Активный профиль: " + profile.name);
@@ -183,12 +199,12 @@ public final class ProfilesActivity extends Activity {
         TextView edit = label("✎", 16, MINT, MEDIUM);
         edit.setPadding(dp(14), dp(8), dp(4), dp(8));
         edit.setClickable(true);
-        edit.setOnClickListener(view -> openEditor(profile.id));
+        BladeMotion.bind(edit, () -> openEditor(profile.id));
         row.addView(edit);
         TextView remove = label("✕", 16, CORAL, MEDIUM);
         remove.setPadding(dp(10), dp(8), dp(4), dp(8));
         remove.setClickable(true);
-        remove.setOnClickListener(view -> confirmDelete(profile));
+        BladeMotion.bind(remove, () -> confirmDelete(profile));
         row.addView(remove);
         return row;
     }
@@ -206,13 +222,13 @@ public final class ProfilesActivity extends Activity {
             row.setGravity(Gravity.CENTER_VERTICAL);
             row.setPadding(dp(16), dp(12), dp(16), dp(12));
             row.setBackground(surface(active != null && active.id.equals(profile.id)
-                ? 0xff17342a : SURFACE, 16, BORDER));
+                ? BladeAppearance.selected(this) : SURFACE, 16, BORDER));
             row.setClickable(true);
             LinearLayout text = column();
             text.addView(label(profile.name, 15, WHITE, BOLD));
             add(text, label(profile.host + ":" + profile.port + " · " + profile.serverName, 12, MUTED, null), 2);
             row.addView(text, new LinearLayout.LayoutParams(0, -2, 1f));
-            row.setOnClickListener(view -> {
+            BladeMotion.bind(row, () -> {
                 ProfileStore.setActive(this, profile.id);
                 if (dialog != null) dialog.dismiss();
                 render();
@@ -224,18 +240,19 @@ public final class ProfilesActivity extends Activity {
         ScrollView listScroll = new ScrollView(this);
         listScroll.addView(list);
         listScroll.setPadding(dp(16), dp(16), dp(16), dp(8));
-        dialog = new AlertDialog.Builder(this)
+        dialog = BladeMotion.show(BladeMotion.builder(this)
             .setTitle("Выбрать профиль")
             .setView(listScroll)
             .setNegativeButton("Закрыть", null)
             .setPositiveButton("Новый профиль", (d, which) -> openEditor(null))
-            .show();
+            .create());
     }
 
     private void openEditor(String id) {
         Intent editor = new Intent(this, ProfileEditorActivity.class);
         editor.putExtra("id", id);
         startActivityForResult(editor, REQUEST_EDIT);
+        BladeMotion.transition(this);
     }
 
     private void importFromClipboard() {
@@ -262,7 +279,7 @@ public final class ProfilesActivity extends Activity {
     }
 
     private void confirmDelete(ProfileStore.Profile profile) {
-        new AlertDialog.Builder(this)
+        BladeMotion.show(BladeMotion.builder(this)
             .setTitle("Удалить «" + profile.name + "»?")
             .setPositiveButton("Удалить", (dialogInterface, which) -> {
                 ProfileStore.delete(this, profile.id);
@@ -270,7 +287,7 @@ public final class ProfilesActivity extends Activity {
                 if (dialog != null) dialog.dismiss();
             })
             .setNegativeButton("Отмена", null)
-            .show();
+            .create());
     }
 
     @Override protected void onActivityResult(int request, int result, Intent data) {
