@@ -102,6 +102,9 @@ EOF
 chmod 0755 /usr/local/bin/sslim-client
 if ! $upgrade; then /usr/local/bin/sslim-client add first > "$tmp/profile"; fi
 
+# Keep customized network rules and ExecStart flags byte-for-byte on upgrades.
+# Existing files were already backed up above before stopping the service.
+if ! $upgrade; then
 cat > "$dir/network" <<'EOF'
 #!/bin/bash
 set -euo pipefail
@@ -153,6 +156,7 @@ RestartSec=3
 WantedBy=multi-user.target
 EOF
 chmod 0644 /etc/systemd/system/sslim.service
+fi
 systemctl daemon-reload
 systemctl enable --now sslim.service
 if ! timeout 15 bash -c 'until (echo > /dev/tcp/127.0.0.1/9443) 2>/dev/null; do sleep 0.25; done'; then
