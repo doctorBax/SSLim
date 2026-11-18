@@ -155,6 +155,9 @@ public final class SettingsActivity extends Activity {
             add(content, item("DNS-серверы",
                 BladeOptions.dnsName(this) + " · применяется после переподключения",
                 this::chooseDns), 12);
+            add(content, item("Транспорт подключения",
+                BladeOptions.transportName(this) + " · применяется после переподключения",
+                this::chooseTransport), 12);
 
             add(content, text("БЕЗОПАСНОСТЬ", 12, MINT, true), 24);
             add(content, item("Kill switch",
@@ -211,6 +214,34 @@ public final class SettingsActivity extends Activity {
         row.addView(control);
         row.setOnClickListener(view -> control.setChecked(!control.isChecked()));
         return row;
+    }
+
+    /** An explicit choice is retained; Auto never falls back on certificate or auth errors. */
+    private void chooseTransport() {
+        String[] names = {
+            "Авто — сначала QUIC/UDP, затем TCP при недоступности UDP",
+            "TCP/TLS — старый совместимый транспорт",
+            "QUIC/UDP — только новый транспорт, без TCP fallback"
+        };
+        String[] values = {
+            BladeOptions.TRANSPORT_AUTO, BladeOptions.TRANSPORT_TCP,
+            BladeOptions.TRANSPORT_QUIC
+        };
+        String current = BladeOptions.transport(this);
+        int selected = 0;
+        for (int i = 0; i < values.length; i++) {
+            if (values[i].equals(current)) selected = i;
+        }
+        new AlertDialog.Builder(this)
+            .setTitle("Выбор транспорта")
+            .setSingleChoiceItems(names, selected, (dialog, which) -> {
+                BladeOptions.setTransport(this, values[which]);
+                dialog.dismiss();
+                render();
+            })
+            .setMessage(null)
+            .setNegativeButton("Отмена", null)
+            .show();
     }
 
     private void chooseDns() {
