@@ -232,6 +232,25 @@ pub struct Server {
 
 #[cfg(target_os = "linux")]
 impl Server {
+    /// Shared allocator for TCP v1 and QUIC v3. Both transports MUST use the
+    /// same instance so peer TUN addresses never collide across transports.
+    pub async fn allocate_peer_tun(&self) -> Result<(Ipv4Addr, Tun)> {
+        let id = self.next_address.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        ensure!(id <= u16::MAX as u32 - 1, "IPv4 tunnel address pool exhausted");
+        let address = Ipv4Addr::from(0x0afd_0000 | id);
+        let name = format!("sslimd{id:04x}");
+        let tun = Tun::open(&name)?;
+        let peer = format!("{address}/32");
+        for args in [
+            ["address", "replace", "10.253.0.1", "peer", &peer, "dev", &name].as_slice(),
+            ["link", "set", "dev", &name, "mtu", "1280", "up"].as_slice(),
+        ] {
+            let status = tokio::process::Command::new("ip").args(args).status().await?;
+            ensure!(status.success(), "failed to configure tunnel {name}");
+        }
+        Ok((address, tun))
+    }
+
     pub async fn handle(self: Arc<Self>, tcp: TcpStream) -> Result<()> {
         tcp.set_nodelay(true)?;
         let tls = timeout(IO_TIMEOUT, self.acceptor.accept(tcp)).await??;
@@ -282,41 +301,7 @@ impl Server {
             && self.multi_tun
             && request.get("x-session-address") == "auto"
         {
-            let id = self
-                .next_address
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            if id > u16::MAX as u32 - 1 {
-                return answer(
-                    &mut stream,
-                    "503 Service Unavailable",
-                    b"Address pool exhausted",
-                    false,
-                )
-                .await;
-            }
-            let address = Ipv4Addr::from(0x0afd_0000 | id);
-            let name = format!("sslimd{id:04x}");
-            let tun = Tun::open(&name)?;
-            let peer = format!("{address}/32");
-            for args in [
-                [
-                    "address",
-                    "replace",
-                    "10.253.0.1",
-                    "peer",
-                    &peer,
-                    "dev",
-                    &name,
-                ]
-                .as_slice(),
-                ["link", "set", "dev", &name, "mtu", "1280", "up"].as_slice(),
-            ] {
-                let status = tokio::process::Command::new("ip")
-                    .args(args)
-                    .status()
-                    .await?;
-                ensure!(status.success(), "failed to configure tunnel {name}");
-            }
+            let (address, tun) = self.allocate_peer_tun().await?;
             let response = format!(
                 "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: sync/1\r\nX-Session-Address: {address}\r\n\r\n"
             );
