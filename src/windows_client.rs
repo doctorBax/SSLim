@@ -350,17 +350,44 @@ async fn verify_exit() -> Result<String> {
             "https://1.1.1.1/cdn-cgi/trace",
         ])
         .output()
-        .await?;
-    let output = std::str::from_utf8(&response.stdout)?;
+        .await
+        .context("failed to launch curl.exe for optional exit IP check")?;
+    ensure!(
+        response.status.success(),
+        "optional exit IP check failed (curl {}): {}",
+        response.status,
+        String::from_utf8_lossy(&response.stderr).trim()
+    );
+    let output = std::str::from_utf8(&response.stdout)
+        .context("exit IP check returned invalid UTF-8")?;
     let exit_ip = output
         .lines()
         .find_map(|line| line.strip_prefix("ip="))
-        .map(str::to_owned);
-    ensure!(
-        response.status.success() && exit_ip.is_some(),
-        "could not verify the tunnel exit IP"
-    );
-    Ok(exit_ip.expect("checked above"))
+        .context("exit IP check response contained no ip= field")?;
+    Ok(exit_ip.to_owned())
+}
+
+/// The external IP check is an advisory diagnostic, not a tunnel health check.
+/// A blocked or unreachable third-party website must never tear down a
+/// successful TLS/SSLim session.
+fn report_exit_check(outcome: Result<String>) {
+    match outcome {
+        Ok(ip) => println!("{OK_MARK} exit IP: {ip}. Press Ctrl+C to disconnect."),
+        Err(error) => eprintln!(
+            "{WARN_MARK} exit IP could not be verified: {error:#}{RESET}. \
+             Tunnel remains connected; check traffic manually."
+        ),
+    }
+}
+
+async fn monitor_exit_check<F>(check: F) -> Result<()>
+where
+    F: std::future::Future<Output = Result<String>>,
+{
+    report_exit_check(check.await);
+    // Keep the VPN running whether the optional third-party probe passed
+    // or failed. Only tunnel I/O, shutdown and the user can end a session.
+    std::future::pending::<Result<()>>().await
 }
 
 async fn report(counters: &Counters, enabled: bool) -> Result<()> {
@@ -454,11 +481,7 @@ async fn connect_once(resolved: &Resolved) -> Result<()> {
             }
         }
     };
-    let check = async {
-        let ip = verify_exit().await?;
-        println!("{OK_MARK} exit IP: {ip}. Press Ctrl+C to disconnect.");
-        std::future::pending::<Result<()>>().await
-    };
+    let check = monitor_exit_check(verify_exit());
     let result = tokio::select! {
         result = uplink => result,
         result = downlink => result,
@@ -712,5 +735,32 @@ mod tests {
             let mask = u32::MAX << (32 - prefix.parse::<u32>().unwrap());
             assert_ne!(u32::from(server) & mask, network);
         }
+    }
+}
+
+#[cfg(test)]
+mod exit_check_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn exit_verification_failure_must_not_disconnect_tunnel() {
+        let probe = async { Err(anyhow::anyhow!("test endpoint unavailable")) };
+        assert!(
+            timeout(Duration::from_millis(20), monitor_exit_check(probe))
+                .await
+                .is_err(),
+            "external IP check failure must not exit the active VPN session"
+        );
+    }
+
+    #[tokio::test]
+    async fn exit_verification_success_must_not_disconnect_tunnel() {
+        let probe = async { Ok("192.0.2.1".into()) };
+        assert!(
+            timeout(Duration::from_millis(20), monitor_exit_check(probe))
+                .await
+                .is_err(),
+            "external IP check success must not exit the active VPN session"
+        );
     }
 }
