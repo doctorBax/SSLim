@@ -1,6 +1,8 @@
 package ru.doctorbax.blade;
 
 import android.content.Context;
+import android.util.AtomicFile;
+import android.util.Log;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -128,22 +130,22 @@ public final class ProfileStore {
     }
 
     private static synchronized void persist(Context context) {
+        AtomicFile target = new AtomicFile(file(context));
+        FileOutputStream output = null;
         try {
             JSONObject root = new JSONObject();
             root.put("active", activeId);
             JSONArray items = new JSONArray();
             for (Profile profile : profiles) items.put(encode(profile));
             root.put("profiles", items);
-            File target = file(context);
-            File temporary = new File(target.getParentFile(), FILE + ".tmp");
-            try (FileOutputStream out = new FileOutputStream(temporary)) {
-                out.write(root.toString().getBytes(StandardCharsets.UTF_8));
-            }
-            if (!temporary.renameTo(target)) {
-                target.delete();
-                temporary.renameTo(target);
-            }
-        } catch (Exception ignored) {
+            // Recover the previous JSON database if a write is interrupted.
+            // Never delete the last good copy after a failed rename.
+            output = target.startWrite();
+            output.write(root.toString().getBytes(StandardCharsets.UTF_8));
+            target.finishWrite(output);
+        } catch (Exception error) {
+            if (output != null) target.failWrite(output);
+            Log.e("Blade", "Unable to persist VPN profiles", error);
         }
     }
 
