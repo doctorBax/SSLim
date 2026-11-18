@@ -38,6 +38,8 @@ public final class SettingsActivity extends Activity {
     }
     private static final Typeface BOLD = Typeface.create("sans-serif-medium", Typeface.NORMAL);
     private boolean showingOptions;
+    private boolean previousSection;
+    private ScrollView visibleScroll;
 
     @Override public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -67,7 +69,7 @@ public final class SettingsActivity extends Activity {
             showingOptions = false;
             render();
         } else {
-            super.onBackPressed();
+            BladeMotion.finish(this);
         }
     }
 
@@ -105,6 +107,10 @@ public final class SettingsActivity extends Activity {
     }
 
     private void render() {
+        boolean first = visibleScroll == null;
+        boolean sectionChanged = !first && showingOptions != previousSection;
+        final int previousY = !first && !sectionChanged ? visibleScroll.getScrollY() : 0;
+        previousSection = showingOptions;
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
         scroll.setBackgroundColor(BG);
@@ -120,12 +126,13 @@ public final class SettingsActivity extends Activity {
         LinearLayout content = column();
         content.setPadding(dp(24), dp(22), dp(24), dp(26));
         scroll.addView(content);
-        setContentView(scroll);
+        BladeMotion.mount(this, scroll);
+        visibleScroll = scroll;
 
         TextView back = text("‹", 36, MINT, false);
         back.setGravity(Gravity.CENTER_VERTICAL);
         back.setContentDescription("Назад");
-        back.setOnClickListener(view -> onBackPressed());
+        BladeMotion.bind(back, this::onBackPressed);
         LinearLayout header = new LinearLayout(this);
         header.setGravity(Gravity.CENTER_VERTICAL);
         header.addView(back, new LinearLayout.LayoutParams(dp(42), dp(48)));
@@ -180,6 +187,8 @@ public final class SettingsActivity extends Activity {
                 "Только по нажатию · GitHub Releases · без автозагрузки APK",
                 () -> BladeUpdates.check(this)), 10);
         }
+        if (previousY > 0) scroll.post(() -> scroll.scrollTo(0, previousY));
+        if (first || sectionChanged) BladeMotion.enter(content);
     }
 
     private View item(String title, String subtitle, Runnable click) {
@@ -189,7 +198,7 @@ public final class SettingsActivity extends Activity {
         row.setClickable(true);
         row.setFocusable(true);
         row.setContentDescription(title + ". " + subtitle);
-        row.setOnClickListener(view -> click.run());
+        BladeMotion.bind(row, click);
         add(row, text(title + "  ›", 16, WHITE, true), 0);
         add(row, text(subtitle, 12, MUTED, false), 5);
         return row;
@@ -212,7 +221,7 @@ public final class SettingsActivity extends Activity {
         control.setChecked(current);
         control.setOnCheckedChangeListener((button, checked) -> action.changed(checked));
         row.addView(control);
-        row.setOnClickListener(view -> control.setChecked(!control.isChecked()));
+        BladeMotion.bind(row, () -> control.setChecked(!control.isChecked()));
         return row;
     }
 
@@ -232,7 +241,7 @@ public final class SettingsActivity extends Activity {
         for (int i = 0; i < values.length; i++) {
             if (values[i].equals(current)) selected = i;
         }
-        new AlertDialog.Builder(this)
+        BladeMotion.show(BladeMotion.builder(this)
             .setTitle("Выбор транспорта")
             .setSingleChoiceItems(names, selected, (dialog, which) -> {
                 BladeOptions.setTransport(this, values[which]);
@@ -241,7 +250,7 @@ public final class SettingsActivity extends Activity {
             })
             .setMessage(null)
             .setNegativeButton("Отмена", null)
-            .show();
+            .create());
     }
 
     private void chooseDns() {
@@ -253,7 +262,7 @@ public final class SettingsActivity extends Activity {
         for (int i = 0; i < values.length; i++) {
             if (values[i].equals(current)) selected = i;
         }
-        new AlertDialog.Builder(this)
+        BladeMotion.show(BladeMotion.builder(this)
             .setTitle("DNS-серверы")
             .setSingleChoiceItems(names, selected, (dialog, which) -> {
                 BladeOptions.setDns(this, values[which]);
@@ -261,11 +270,11 @@ public final class SettingsActivity extends Activity {
                 render();
             })
             .setNegativeButton("Отмена", null)
-            .show();
+            .create());
     }
 
     private void showKillSwitchGuide() {
-        new AlertDialog.Builder(this)
+        BladeMotion.show(BladeMotion.builder(this)
             .setTitle("Kill switch — системная защита")
             .setMessage("Android обеспечивает надёжную блокировку трафика даже при "
                 + "сбое Blade. Откройте настройки VPN, нажмите на Blade "
@@ -282,6 +291,6 @@ public final class SettingsActivity extends Activity {
                 }
             })
             .setNegativeButton("Закрыть", null)
-            .show();
+            .create());
     }
 }
