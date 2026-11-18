@@ -20,6 +20,8 @@ jobs:
       - name: Verify Android menu and animation contracts
         run: python3 scripts/test-android-motion.py
       - run: cargo build --release --locked
+      - name: Verify TCP compatibility with v0.2.0 servers
+        run: python3 scripts/test-legacy-tcp.py target/release/sslim
       - name: Verify nested interactive CLI menu (PTY)
         run: python3 scripts/test-cli-menu.py target/release/sslim
       - name: Verify concurrent Linux tunnels
