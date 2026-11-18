@@ -82,7 +82,7 @@ fn rewrite_unit(input: &str, enable: bool) -> Result<(String, u16, bool)> {
             } else if existing_udp == Some(tcp_port) {
                 result.push_str(content);
             } else {
-                result.push_str(&format!("ExecStart={} --udp-port {tcp_port}", filtered.join(" ")));
+                bail!("Служба уже использует другой UDP порт {}. Автоматическая перезапись заблокирована; проверь настройку вручную", existing_udp.unwrap());
             }
         } else if existing_udp.is_some() {
             ensure!(!invocation.contains('"') && !invocation.contains('\'')
@@ -238,12 +238,10 @@ mod tests {
         assert!(rewrite_unit("[Service]\nExecStart=/usr/bin/python old.py\n", true).is_err());
     }
     #[test]
-    fn replacement_of_different_udp_port_is_reversible() {
+    fn existing_different_udp_port_is_preserved_not_overwritten() {
         let old = SERVICE.replace("--secrets-file /etc/sslim/clients.txt",
             "--secrets-file /etc/sslim/clients.txt --udp-port 9543");
-        let (new, port, _) = rewrite_unit(&old, true).unwrap();
-        assert_eq!(port, 9443);
-        assert!(new.contains("--udp-port 9443"));
-        assert!(!new.contains("9543"));
+        assert!(rewrite_unit(&old, true).is_err());
+        assert_eq!(rewrite_unit(&old, false).unwrap().0, SERVICE);
     }
 }
