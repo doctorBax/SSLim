@@ -74,7 +74,7 @@ public final class ProfileEditorActivity extends Activity {
         LinearLayout content = column();
         content.setPadding(dp(22), dp(22), dp(22), dp(22));
         scroll.addView(content);
-        setContentView(scroll);
+        BladeMotion.mount(this, scroll);
 
         LinearLayout header = new LinearLayout(this);
         header.setGravity(Gravity.CENTER_VERTICAL);
@@ -82,7 +82,7 @@ public final class ProfileEditorActivity extends Activity {
         header.addView(title, new LinearLayout.LayoutParams(0, -2, 1f));
         TextView cancel = label("Отмена", 14, MUTED, MEDIUM);
         cancel.setPadding(dp(8), dp(8), dp(8), dp(8));
-        cancel.setOnClickListener(view -> finish());
+        BladeMotion.bind(cancel, () -> BladeMotion.finish(this));
         header.addView(cancel);
         add(content, header, 0);
 
@@ -98,7 +98,7 @@ public final class ProfileEditorActivity extends Activity {
         add(content, caption("ДОБАВИТЬ ПО ССЫЛКЕ"), 18);
         add(content, link, 6);
         Button fill = pill("Заполнить данные из ссылки");
-        fill.setOnClickListener(view -> fillFromLink());
+        BladeMotion.bind(fill, this::fillFromLink);
         add(content, fill, 8);
 
         add(content, caption("ОСНОВНЫЕ ДАННЫЕ"), 20);
@@ -123,7 +123,10 @@ public final class ProfileEditorActivity extends Activity {
         customCa.setTextColor(WHITE);
         customCa.setTextSize(13);
         customCa.setSingleLine(false);
-        customCa.setOnCheckedChangeListener((button, checked) -> caPem.setVisibility(checked ? View.VISIBLE : View.GONE));
+        customCa.setOnCheckedChangeListener((button, checked) -> {
+            caPem.setVisibility(checked ? View.VISIBLE : View.GONE);
+            if (checked) BladeMotion.selected(caPem);
+        });
         add(content, customCa, 4);
         caPem = field("Вставьте сертификат целиком", true);
         caPem.setVisibility(View.GONE);
@@ -135,13 +138,13 @@ public final class ProfileEditorActivity extends Activity {
         save.setAllCaps(false);
         save.setTextSize(16);
         save.setTypeface(BOLD);
-        save.setTextColor(BACKGROUND);
+        save.setTextColor(BladeAppearance.onAccent(this));
         save.setMinHeight(dp(54));
         save.setStateListAnimator(null);
         save.setBackground(new android.graphics.drawable.RippleDrawable(
             android.content.res.ColorStateList.valueOf(0x280b121a),
             surface(MINT, 18, 0), null));
-        save.setOnClickListener(view -> save());
+        BladeMotion.bind(save, this::save);
         add(content, save, 24);
 
         if (existing != null) {
@@ -156,11 +159,16 @@ public final class ProfileEditorActivity extends Activity {
             delete.setBackground(new android.graphics.drawable.RippleDrawable(
                 android.content.res.ColorStateList.valueOf(0x30ffffff),
                 surface(SURFACE, 16, BORDER), null));
-            delete.setOnClickListener(view -> confirmDelete());
+            BladeMotion.bind(delete, this::confirmDelete);
             add(content, delete, 10);
             editingMarker = existing.marker;
             fill(existing);
         }
+        BladeMotion.enter(content);
+    }
+
+    @Override public void onBackPressed() {
+        BladeMotion.finish(this);
     }
 
     private void fill(ProfileStore.Profile profile) {
@@ -213,7 +221,7 @@ public final class ProfileEditorActivity extends Activity {
                 nameValue, hostValue, portNumber, sniValue, editingMarker, key, ca);
             ProfileStore.save(this, profile);
             setResult(RESULT_OK);
-            finish();
+            BladeMotion.finish(this);
         } catch (IllegalArgumentException error) {
             toast(error.getMessage());
         } catch (Exception error) {
@@ -222,15 +230,15 @@ public final class ProfileEditorActivity extends Activity {
     }
 
     private void confirmDelete() {
-        new AlertDialog.Builder(this)
+        BladeMotion.show(BladeMotion.builder(this)
             .setTitle("Удалить профиль?")
             .setPositiveButton("Удалить", (dialog, which) -> {
                 ProfileStore.delete(this, editingId);
                 setResult(RESULT_OK);
-                finish();
+                BladeMotion.finish(this);
             })
             .setNegativeButton("Отмена", null)
-            .show();
+            .create());
     }
 
     private void toast(String message) {
@@ -250,6 +258,9 @@ public final class ProfileEditorActivity extends Activity {
         view.setTextSize(14);
         view.setBackground(surface(SURFACE, 14, BORDER));
         view.setPadding(dp(14), dp(12), dp(14), dp(12));
+        view.setOnFocusChangeListener((v, focused) ->
+            view.setBackground(surface(focused ? BladeAppearance.selected(this) : SURFACE,
+                14, focused ? MINT : BORDER)));
         if (multiline) {
             view.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
             view.setMinLines(multiline ? 2 : 1);
