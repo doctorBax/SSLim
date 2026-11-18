@@ -124,9 +124,14 @@ final class BladeMotion {
         });
     }
 
+    static void transition(Activity from) {
+        if (allowed()) from.overridePendingTransition(
+            android.R.anim.fade_in, android.R.anim.fade_out);
+    }
+
     static void navigate(Activity from, Intent intent) {
         from.startActivity(intent);
-        if (allowed()) from.overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out);
+        transition(from);
     }
 
     static void finish(Activity activity) {
