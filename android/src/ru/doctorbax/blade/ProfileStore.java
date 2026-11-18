@@ -43,8 +43,20 @@ public final class ProfileStore {
         }
 
         public String uri() {
-            return "sslim://" + host + ":" + port + "?sni=" + serverName
-                + "&k=" + Base64.getEncoder().encodeToString(secret) + "&n=" + name;
+            // Export every connection-critical field, especially the historical
+            // TCP marker and the server's private CA. Omitting either breaks
+            // importing a working profile on a second device.
+            StringBuilder link = new StringBuilder("sslim://")
+                .append(host).append(":").append(port)
+                .append("?sni=").append(serverName)
+                .append("&k=").append(Base64.getEncoder().encodeToString(secret))
+                .append("&u=").append(marker)
+                .append("&n=").append(name);
+            if (caPem != null && !caPem.isEmpty()) {
+                link.append("&ca=").append(Base64.getEncoder().encodeToString(
+                    caPem.getBytes(StandardCharsets.UTF_8)));
+            }
+            return link.toString();
         }
     }
 
