@@ -30,16 +30,24 @@ public final class AppearanceActivity extends Activity {
     private ImageView previewArrow;
     private boolean demoConnected = true;
     private String appliedStamp;
+    private ScrollView visibleScroll;
+    private int pendingScrollY;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         demoConnected = state == null || state.getBoolean("demo", true);
+        pendingScrollY = state == null ? 0 : state.getInt("scrollY", 0);
         render();
     }
 
     @Override protected void onSaveInstanceState(Bundle out) {
         out.putBoolean("demo", demoConnected);
+        out.putInt("scrollY", visibleScroll == null ? 0 : visibleScroll.getScrollY());
         super.onSaveInstanceState(out);
+    }
+
+    @Override public void onBackPressed() {
+        BladeMotion.finish(this);
     }
 
     @Override protected void onStart() {
@@ -97,6 +105,8 @@ public final class AppearanceActivity extends Activity {
     }
 
     private void render() {
+        boolean entering = visibleScroll == null;
+        final int preserveScroll = entering ? pendingScrollY : visibleScroll.getScrollY();
         if (preview != null) preview.setAnimationVisible(false);
         appliedStamp = BladeAppearance.stamp(this);
         BladeAppearance.applyWindow(this);
@@ -115,13 +125,14 @@ public final class AppearanceActivity extends Activity {
         LinearLayout root = column();
         root.setPadding(dp(24),dp(22),dp(24),dp(30));
         scroll.addView(root);
-        setContentView(scroll);
+        BladeMotion.mount(this, scroll);
+        visibleScroll = scroll;
 
         LinearLayout header = new LinearLayout(this);
         header.setGravity(Gravity.CENTER_VERTICAL);
         TextView back = label("‹",36,primary(),false);
         back.setGravity(Gravity.CENTER_VERTICAL);
-        back.setOnClickListener(view -> finish());
+        BladeMotion.bind(back, () -> BladeMotion.finish(this));
         back.setContentDescription("Назад");
         header.addView(back,new LinearLayout.LayoutParams(dp(42),dp(48)));
         header.addView(label("Оформление",21,textColor(),true));
@@ -149,11 +160,10 @@ public final class AppearanceActivity extends Activity {
         arrow.setBackground(bgShape(primary(),BladeAppearance.square(this)?18:44,0));
         stage.addView(arrow,new FrameLayout.LayoutParams(dp(82),dp(82),Gravity.CENTER));
         stage.setContentDescription("Предпросмотр. Нажмите для имитации подключения.");
-        stage.setOnClickListener(view -> {
+        BladeMotion.bind(stage, () -> {
             demoConnected=!demoConnected;
-            if (BladeAppearance.haptics(this)) BladeAppearance.haptic(stage);
             preview.setState(demoConnected,demoConnected);
-            invalidateOptionsMenu();
+            BladeMotion.selected(previewArrow);
         });
         LinearLayout.LayoutParams stageLp = new LinearLayout.LayoutParams(-1,dp(212));
         stageLp.topMargin=dp(9);
@@ -197,7 +207,7 @@ public final class AppearanceActivity extends Activity {
                 row.addView(label("✓",17,primary(),true));
             }
             row.setClickable(true);
-            row.setOnClickListener(v->{
+            BladeMotion.bind(row, () -> {
                 if(BladeAppearance.CUSTOM.equals(value)) {
                     colorPicker();
                 } else {
@@ -247,8 +257,10 @@ public final class AppearanceActivity extends Activity {
             if(checked) BladeAppearance.haptic(haptics);
         });
         toggle.addView(haptics);
-        toggle.setOnClickListener(view->haptics.setChecked(!haptics.isChecked()));
+        BladeMotion.bind(toggle, () -> haptics.setChecked(!haptics.isChecked()));
         add(root,toggle,10);
+        if (preserveScroll > 0) scroll.post(() -> scroll.scrollTo(0, preserveScroll));
+        if (entering) BladeMotion.enter(root);
     }
 
     private View choice(String content, boolean selected, Runnable action) {
@@ -257,10 +269,7 @@ public final class AppearanceActivity extends Activity {
         row.setPadding(dp(15),dp(15),dp(15),dp(15));
         row.setBackground(bgShape(surfaceColor(),15,selected?primary():border()));
         row.setClickable(true);
-        row.setOnClickListener(view -> {
-            BladeAppearance.haptic(view);
-            action.run();
-        });
+        BladeMotion.bind(row, action);
         return row;
     }
 
@@ -334,7 +343,7 @@ public final class AppearanceActivity extends Activity {
                 }catch(IllegalArgumentException ignored){}
             }
         });
-        AlertDialog dialog=new AlertDialog.Builder(this)
+        AlertDialog dialog=BladeMotion.builder(this)
             .setTitle("Свой акцентный цвет")
             .setView(panel)
             .setPositiveButton("Применить",(d,which)->{
@@ -351,7 +360,7 @@ public final class AppearanceActivity extends Activity {
                 render();
             }
         });
-        dialog.show();
+        BladeMotion.show(dialog);
         refreshPreview();
     }
 
