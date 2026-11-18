@@ -7,7 +7,7 @@ server certificate and a compatible transport listener.
 | Client releases | TCP Upgrade | New server (this branch) | Old server |
 | --- | --- | --- | --- |
 | v0.1.0, v0.2.0 | `lab-packet/1` | Accepted; response uses `lab-packet/1` | Native support |
-| v0.3.0–v0.6.1 | `sync/1` | Accepted; response uses `sync/1` | Current client on Linux/Windows retries `lab-packet/1` on HTTP 404 |
+| v0.3.0–v0.6.1 | `sync/1` | Accepted; response uses `sync/1` | Current Linux/Windows/Android clients retry `lab-packet/1` on HTTP 404 |
 
 The TCP packet format, TLS 1.3 validation and HMAC domain are the same.
 Both Upgrade markers are authenticated identically; unknown markers and invalid
