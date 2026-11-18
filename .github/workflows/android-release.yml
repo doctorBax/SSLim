@@ -1,62 +1,104 @@
-name: Release Android Blade
+name: Publish SSLim release
 
 on:
-  push:
+  workflow_run:
+    workflows: ["Build packages"]
+    types: [completed]
     branches: [main]
-    paths:
-      - android/AndroidManifest.xml
 
 permissions:
+  actions: read
   contents: write
+
+concurrency:
+  group: publish-sslim-v0.6.0
+  cancel-in-progress: false
 
 jobs:
   publish:
-    runs-on: windows-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' }}
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - name: Checkout exactly the commit that passed CI
+        uses: actions/checkout@v4
         with:
-          distribution: temurin
-          java-version: '17'
-      - name: Build signed Android APK
-        shell: pwsh
-        env:
-          BLADE_SIGN_STORE: ${{ secrets.BLADE_SIGN_STORE }}
-          BLADE_SIGN_PASS: ${{ secrets.BLADE_SIGN_PASS }}
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+
+      - name: Validate 0.6.0 release versions
+        shell: bash
         run: |
-          $sdk = $env:ANDROID_HOME
-          $manager = Join-Path $sdk 'cmdline-tools/latest/bin/sdkmanager.bat'
-          & $manager --sdk_root="$sdk" 'platforms;android-35' 'build-tools;35.0.0'
-          if ($LASTEXITCODE -ne 0) { throw 'Android SDK install failed' }
-          if ($env:BLADE_SIGN_STORE -and $env:BLADE_SIGN_PASS) {
-            $store = Join-Path $env:RUNNER_TEMP 'blade-signing.p12'
-            try {
-              [IO.File]::WriteAllBytes($store, [Convert]::FromBase64String($env:BLADE_SIGN_STORE))
-              ./android/build.ps1 -Sdk $sdk -Jdk $env:JAVA_HOME -SigningStore $store
-            } finally {
-              Remove-Item -LiteralPath $store -ErrorAction SilentlyContinue
-            }
-          } else {
-            Write-Warning 'No persistent signing secrets: APK gets an ephemeral debug signing key and may not update an existing install.'
-            ./android/build.ps1 -Sdk $sdk -Jdk $env:JAVA_HOME
-          }
-      - name: Publish v0.5.0 with Blade APK
-        shell: pwsh
+          set -euo pipefail
+          grep -Fxq 'version = "0.6.0"' Cargo.toml
+          grep -Fq 'android:versionName="0.6.0"' android/AndroidManifest.xml
+          grep -Fxq 'version = "0.6.0"' android/native/Cargo.toml
+
+      - name: Retrieve platform builds from the successful main CI run
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
         run: |
-          $tag = 'v0.5.0'
-          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
-          if ($LASTEXITCODE -eq 0) { throw "Release $tag already exists" }
-          $notes = @'
-          Android Blade 0.5.0:
-          - Faster TUN/TLS forwarding with batching and bounded queues.
-          - Settings split into Profiles and App settings.
-          - DNS choices: Cloudflare, Google, Quad9.
-          - Reconnection and performance logging preferences.
-          - Android Always-on VPN / Block connections without VPN support for a real kill switch.
-          - Enable kill switch manually: Blade > Settings > App settings > Kill switch > Android VPN settings, then enable both Android switches.
-          If the APK uses a different signing certificate than your installed Blade, back up your VPN profile before uninstalling.
-          '@
-          gh release create $tag android/build/Blade.apk --target $env:GITHUB_SHA --repo $env:GITHUB_REPOSITORY --title "SSLim v0.5.0 — Blade Android" --notes $notes
-          if ($LASTEXITCODE -ne 0) { throw 'Could not publish release' }
+          set -euo pipefail
+          mkdir -p dist/staging/linux dist/staging/windows dist/staging/android
+          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --name sslim-linux-x86_64 --dir dist/staging/linux
+          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --name sslim-windows-x86_64 --dir dist/staging/windows
+          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --name Blade-Android --dir dist/staging/android
+          install -m 0644 dist/staging/linux/sslim-linux-x86_64.tar.gz dist/sslim-linux-x86_64.tar.gz
+          install -m 0644 dist/staging/windows/sslim-windows-x86_64.zip dist/sslim-windows-x86_64.zip
+          install -m 0644 dist/staging/android/Blade.apk dist/Blade.apk
+          (
+            cd dist
+            sha256sum sslim-linux-x86_64.tar.gz sslim-windows-x86_64.zip Blade.apk > SHA256SUMS
+            sha256sum --check SHA256SUMS
+          )
+
+      - name: Write release notes
+        shell: bash
+        run: |
+          cat > dist/RELEASE_NOTES.md <<'NOTES'
+          ## SSLim 0.6.0 — Android, Linux and Windows
+
+          ### Android Blade
+          - System, dark and light themes; Blade Mint, Arctic Blue, Soft Lavender, Warm Amber and custom HSV/HEX accents.
+          - Orbit, Aurora, Data Stream, Spectrum and Crystal animation styles with coordinated menu effects, motion and haptics.
+          - Round/square connection button, interactive preview, redesigned profiles and settings.
+          - Manual-only GitHub Releases update checker; no automatic download or install.
+          - Android system Always-on VPN and "Block connections without VPN" kill switch settings guide.
+          - Experimental UDP/QUIC v3 transport: Auto / TCP / QUIC selection, encrypted datagrams and optional TCP fallback only for UDP unavailability.
+
+          ### Linux and Windows
+          - Bare `sslim` opens interactive nested menus with arrows, Enter and numeric fallback; existing subcommands remain script-compatible.
+          - Improved client profile management, QR links, manual version checking, and server administration.
+          - Linux opt-in UDP listener: `--udp-port 9443` alongside unchanged TCP v1. UDP requires firewall allowance and a new 0.6.0 Linux server; the old standalone QUIC v2 remains separate.
+          - Shared TCP/QUIC authentication and isolated peer TUN addresses.
+
+          ### Compatibility and cautions
+          - Existing `sslim://` profiles, certificate paths and clients.txt keyring are preserved.
+          - The Android UDP feature is experimental; real-device networking, failover and performance may vary.
+          - When upgrading a Linux server installed via install-server.sh, back up `/etc/sslim` and the systemd unit. The updated installer keeps existing network/service configuration on upgrade, and therefore does not enable UDP by itself.
+          - Android APK update-in-place may fail if the signing key differs from your installed APK. Back up profiles before uninstalling the previous version.
+          - UDP/QUIC changes apply only to v3 and opt-in server mode; old TCP behavior remains supported.
+          NOTES
+
+      - name: Publish tag and all three packages
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMIT_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          tag=v0.6.0
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $tag already exists; leaving the published assets unchanged."
+            exit 0
+          fi
+          gh release create "$tag" \
+            dist/sslim-linux-x86_64.tar.gz \
+            dist/sslim-windows-x86_64.zip \
+            dist/Blade.apk \
+            dist/SHA256SUMS \
+            --target "$COMMIT_SHA" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "SSLim v0.6.0 — Blade, interactive CLI and QUIC v3" \
+            --notes-file dist/RELEASE_NOTES.md
