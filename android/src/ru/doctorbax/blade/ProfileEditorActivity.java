@@ -186,7 +186,8 @@ public final class ProfileEditorActivity extends Activity {
     private void fillFromLink() {
         String source = link.getText().toString().replaceAll("\\s+", "");
         if (source.isEmpty()) {
-            toast("Поле ссылки пустое");
+            link.setError("Вставьте ссылку sslim://");
+            link.requestFocus();
             return;
         }
         try {
@@ -202,19 +203,41 @@ public final class ProfileEditorActivity extends Activity {
     private void save() {
         try {
             String hostValue = host.getText().toString().trim();
-            if (hostValue.isEmpty()) throw new IllegalArgumentException("Заполните адрес сервера");
+            if (hostValue.isEmpty()) {
+                fieldError(host, "Заполните адрес сервера");
+                return;
+            }
             String portValue = port.getText().toString().trim();
-            int portNumber = portValue.isEmpty() ? 9443 : Integer.parseInt(portValue);
-            if (portNumber < 1 || portNumber > 65535) throw new IllegalArgumentException("Неверный порт");
+            int portNumber;
+            try {
+                portNumber = portValue.isEmpty() ? 9443 : Integer.parseInt(portValue);
+            } catch (NumberFormatException error) {
+                fieldError(port, "Введите порт от 1 до 65535");
+                return;
+            }
+            if (portNumber < 1 || portNumber > 65535) {
+                fieldError(port, "Введите порт от 1 до 65535");
+                return;
+            }
             String sniValue = sni.getText().toString().trim();
             if (sniValue.isEmpty()) sniValue = hostValue;
-            byte[] key = Base64.getMimeDecoder().decode(secret.getText().toString().trim());
-            if (key.length < 32) throw new IllegalArgumentException("Секрет короче 32 байт");
+            byte[] key;
+            try {
+                key = Base64.getMimeDecoder().decode(secret.getText().toString().trim());
+            } catch (IllegalArgumentException error) {
+                fieldError(secret, "Неверный Base64 ключ");
+                return;
+            }
+            if (key.length < 32) {
+                fieldError(secret, "Секрет должен содержать не меньше 32 байт");
+                return;
+            }
             String nameValue = name.getText().toString().trim();
             if (nameValue.isEmpty()) nameValue = hostValue;
             String ca = customCa.isChecked() ? caPem.getText().toString().trim() : null;
             if (customCa.isChecked() && (ca == null || !ca.contains("BEGIN CERTIFICATE"))) {
-                throw new IllegalArgumentException("PEM-сертификат не похож на сертификат");
+                fieldError(caPem, "Вставьте действительный PEM-сертификат");
+                return;
             }
             ProfileStore.Profile profile = new ProfileStore.Profile(
                 editingId == null ? ProfileStore.newId() : editingId,
@@ -243,6 +266,13 @@ public final class ProfileEditorActivity extends Activity {
 
     private void toast(String message) {
         Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+    }
+
+    /** Keep the editing context visible instead of reporting a generic toast. */
+    private void fieldError(EditText field, String message) {
+        field.setError(message);
+        field.requestFocus();
+        BladeMotion.state(field);
     }
 
     private TextView caption(String text) {
