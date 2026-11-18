@@ -201,10 +201,20 @@ pub fn list() -> Result<Vec<Profile>> {
     for entry in fs::read_dir(&dir)? {
         let path = entry?.path();
         if path.extension().is_some_and(|ext| ext == "toml") {
-            if let Ok(text) = fs::read_to_string(&path) {
-                if let Ok(profile) = toml::from_str::<Profile>(&text) {
-                    profiles.push(profile);
-                }
+            // Do not silently hide a saved server after a typo in its TOML.
+            // Avoid echoing the parse error: it might contain the VPN secret.
+            match fs::read_to_string(&path) {
+                Ok(text) => match toml::from_str::<Profile>(&text) {
+                    Ok(profile) => profiles.push(profile),
+                    Err(_) => eprintln!(
+                        "Blade: invalid TOML profile {} (edit this file to repair it)",
+                        path.display()
+                    ),
+                },
+                Err(error) => eprintln!(
+                    "Blade: cannot read profile {}: {error}",
+                    path.display()
+                ),
             }
         }
     }
@@ -292,6 +302,30 @@ mod tests {
         assert_eq!(parsed.server_name, "vpn.example.com");
         assert_eq!(parsed.name, "vpn.example.com");
         assert_eq!(parsed.secret().unwrap(), vec![7u8; 32]);
+    }
+
+    #[test]
+    fn legacy_marker_survives_toml_round_trip() {
+        let mut profile = sample();
+        profile.marker = "lab-packet/1".into();
+        let text = toml::to_string(&profile).unwrap();
+        let restored: Profile = toml::from_str(&text).unwrap();
+        assert_eq!(restored.marker, "lab-packet/1");
+        let uri = restored.to_uri().unwrap();
+        assert!(uri.contains("&u=lab-packet/1"));
+        assert_eq!(Profile::from_uri(&uri).unwrap().marker, "lab-packet/1");
+    }
+
+    #[test]
+    fn malformed_profile_is_detected_without_changing_other_profiles() {
+        let valid = toml::to_string(&sample()).unwrap();
+        let damaged = valid.replace(
+            "marker = \"sync/1\"",
+            "marker = \"lab-packet/1\"ы",
+        );
+        assert_ne!(valid, damaged);
+        assert!(toml::from_str::<Profile>(&damaged).is_err());
+        assert!(toml::from_str::<Profile>(&valid).is_ok());
     }
 
     #[test]

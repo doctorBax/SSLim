@@ -7,7 +7,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use anyhow::{Result, bail, ensure};
+use anyhow::{Context, Result, bail, ensure};
+use std::fmt;
 #[cfg(target_os = "linux")]
 use clap::ValueEnum;
 use ring::hmac;
@@ -40,6 +41,28 @@ const UPGRADE: &[u8] =
 #[cfg(target_os = "linux")]
 const PUBLIC_PAGE: &[u8] = b"<!doctype html><title>Service</title><p>Service available.</p>";
 const IO_TIMEOUT: Duration = Duration::from_secs(5);
+const LEGACY_TCP_MARKER: &str = "lab-packet/1";
+
+#[derive(Debug)]
+struct UpgradeRejected {
+    status_line: String,
+}
+
+impl fmt::Display for UpgradeRejected {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "HTTP upgrade rejected by server: {}", self.status_line)
+    }
+}
+
+impl std::error::Error for UpgradeRejected {}
+
+fn should_retry_legacy(marker: &str, error: &anyhow::Error) -> bool {
+    marker == crate::profile::DEFAULT_MARKER
+        && error
+            .downcast_ref::<UpgradeRejected>()
+            .is_some_and(|rejection| rejection.status_line.starts_with("HTTP/1.1 404 "))
+}
+
 
 #[cfg(target_os = "linux")]
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -153,7 +176,7 @@ pub async fn connect(
     marker: &str,
 ) -> Result<BufReader<tokio_rustls::client::TlsStream<TcpStream>>> {
     Ok(
-        connect_inner(host, port, server_name, connector, key, marker, false)
+        connect_with_legacy_fallback(host, port, server_name, connector, key, marker, false)
             .await?
             .0,
     )
@@ -171,7 +194,36 @@ pub async fn connect_with_address(
     BufReader<tokio_rustls::client::TlsStream<TcpStream>>,
     Ipv4Addr,
 )> {
-    connect_inner(host, port, server_name, connector, key, marker, true).await
+    connect_with_legacy_fallback(host, port, server_name, connector, key, marker, true).await
+}
+
+async fn connect_with_legacy_fallback(
+    host: &str,
+    port: u16,
+    server_name: &str,
+    connector: TlsConnector,
+    key: &hmac::Key,
+    marker: &str,
+    dynamic_address: bool,
+) -> Result<(
+    BufReader<tokio_rustls::client::TlsStream<TcpStream>>,
+    Ipv4Addr,
+)> {
+    match connect_inner(
+        host, port, server_name, connector.clone(), key, marker, dynamic_address,
+    ).await {
+        Err(error) if should_retry_legacy(marker, &error) => {
+            eprintln!("TCP upgrade returned HTTP 404; retrying legacy v0.2.0 marker");
+            // The legacy marker changes only the HTTP Upgrade label, not TLS,
+            // the HMAC scheme, certificate validation or framing.
+            connect_inner(
+                host, port, server_name, connector, key, LEGACY_TCP_MARKER, dynamic_address,
+            )
+            .await
+            .context("legacy TCP v0.2.0 retry failed")
+        }
+        result => result,
+    }
 }
 
 async fn connect_inner(
@@ -187,11 +239,17 @@ async fn connect_inner(
     Ipv4Addr,
 )> {
     let name = ServerName::try_from(server_name.to_owned())?;
-    let tcp = timeout(Duration::from_secs(10), TcpStream::connect((host, port))).await??;
+    let tcp = timeout(Duration::from_secs(10), TcpStream::connect((host, port)))
+        .await
+        .with_context(|| format!("TCP connect to {host}:{port} timed out"))?
+        .with_context(|| format!("TCP connect to {host}:{port} failed"))?;
     tcp.set_nodelay(true)?;
     let mut stream = BufReader::with_capacity(
         32 * 1024,
-        timeout(IO_TIMEOUT, connector.connect(name, tcp)).await??,
+        timeout(IO_TIMEOUT, connector.connect(name, tcp))
+            .await
+            .context("TLS handshake timed out")?
+            .context("TLS handshake failed")?,
     );
     let (time, nonce, tag) = credentials(key)?;
     let request = format!(
@@ -202,12 +260,22 @@ async fn connect_inner(
             ""
         }
     );
-    timeout(IO_TIMEOUT, send(&mut stream, request.as_bytes())).await??;
-    let response = timeout(IO_TIMEOUT, headers(&mut stream)).await??;
-    ensure!(
-        response.starts_with(b"HTTP/1.1 101 Switching Protocols\r\n"),
-        "server rejected the session"
-    );
+    timeout(IO_TIMEOUT, send(&mut stream, request.as_bytes()))
+        .await
+        .context("sending HTTP upgrade timed out")?
+        .context("sending HTTP upgrade failed")?;
+    let response = timeout(IO_TIMEOUT, headers(&mut stream))
+        .await
+        .context("reading HTTP upgrade response timed out")?
+        .context("reading HTTP upgrade response failed")?;
+    if !response.starts_with(b"HTTP/1.1 101 Switching Protocols\r\n") {
+        let status_line = std::str::from_utf8(&response)?
+            .split("\r\n")
+            .next()
+            .unwrap_or("invalid HTTP response")
+            .to_owned();
+        return Err(UpgradeRejected { status_line }.into());
+    }
     let address = std::str::from_utf8(&response)?
         .split("\r\n")
         .filter_map(|line| line.split_once(':'))
@@ -398,5 +466,27 @@ async fn echo<S: AsyncRead + AsyncWrite + Unpin>(stream: S, device: Device) -> R
             }
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod legacy_compat_tests {
+    use super::*;
+
+    #[test]
+    fn retry_legacy_only_after_http_404_with_default_marker() {
+        let missing = anyhow::Error::new(UpgradeRejected {
+            status_line: "HTTP/1.1 404 Not Found".into(),
+        });
+        assert!(should_retry_legacy(crate::profile::DEFAULT_MARKER, &missing));
+        assert!(!should_retry_legacy(LEGACY_TCP_MARKER, &missing));
+        assert!(!should_retry_legacy("custom/1", &missing));
+
+        let unauthorized = anyhow::Error::new(UpgradeRejected {
+            status_line: "HTTP/1.1 403 Forbidden".into(),
+        });
+        assert!(!should_retry_legacy(crate::profile::DEFAULT_MARKER, &unauthorized));
+        let transport = anyhow::anyhow!("TCP connect timed out");
+        assert!(!should_retry_legacy(crate::profile::DEFAULT_MARKER, &transport));
     }
 }
