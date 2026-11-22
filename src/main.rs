@@ -8,15 +8,19 @@ mod tui_linux;
 mod tui_windows;
 #[cfg(target_os = "linux")]
 mod client_admin;
+#[cfg(any(target_os = "linux", test))]
+mod key_watch;
 mod profile;
 mod protocol;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", windows))]
 mod quic;
 mod session;
 #[cfg(target_os = "linux")]
 mod tun;
 #[cfg(windows)]
 mod windows_client;
+#[cfg(windows)]
+mod windows_filter;
 
 #[cfg(target_os = "linux")]
 use std::collections::HashMap;
@@ -312,8 +316,7 @@ async fn dispatch_command(command: Command) -> Result<()> {
             );
             let server = Arc::new(Server {
                 acceptor: server_tls(&cert, &key)?,
-                ring,
-                secrets_file,
+                keys: key_watch::start(ring, secrets_file),
                 replay: Mutex::new(HashMap::new()),
                 device,
                 tun_name,

@@ -447,6 +447,7 @@ public final class MainActivity extends Activity {
             .putExtra("marker", profile.marker)
             .putExtra("secretBase64",
                 android.util.Base64.encodeToString(profile.secret, android.util.Base64.NO_WRAP));
+        launch.putStringArrayListExtra("excludedPackages", new java.util.ArrayList<>(profile.excludedPackages));
         if (profile.caPem != null && !profile.caPem.isEmpty()) {
             launch.putExtra("caPem", profile.caPem);
         }

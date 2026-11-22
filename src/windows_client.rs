@@ -1,14 +1,14 @@
-use std::net::{Ipv4Addr, ToSocketAddrs};
+use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, ensure};
 use clap::Subcommand;
 use ring::hmac;
-use tokio::io::{self, AsyncWriteExt};
+use tokio::io::{self, AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
 use tokio::time::{MissedTickBehavior, timeout};
 use wintun::{Adapter, Session};
@@ -38,6 +38,8 @@ pub struct BladeArgs {
 
 #[derive(Subcommand)]
 pub enum BladeCommand {
+    /// Remove Blade's persistent tunnel guard (administrator required).
+    Unlock,
     /// Import a profile from an sslim:// URI or a profile .toml file
     Import {
         source: String,
@@ -60,6 +62,15 @@ pub enum BladeCommand {
 
 #[derive(clap::Args)]
 pub struct ConnectArgs {
+    /// Experimental QUIC UDP port; TCP is used only if its handshake times out.
+    #[arg(long)]
+    pub quic_port: Option<u16>,
+    /// Experimental persistent WFP guard; requires --host/profile host to be a literal IPv4.
+    #[arg(long)]
+    pub kill_switch: bool,
+    /// Stop gracefully when this absolute marker path appears (used by the tray).
+    #[arg(long)]
+    pub stop_file: Option<PathBuf>,
     /// Profile name to connect with (see `sslim blade list`)
     #[arg(long)]
     pub profile: Option<String>,
@@ -84,10 +95,12 @@ pub struct ConnectArgs {
 
 struct Resolved {
     profile: Profile,
-    server_ip: Ipv4Addr,
     key: hmac::Key,
     wintun_dll: PathBuf,
     route_script: PathBuf,
+    stop_file: Option<PathBuf>,
+    kill_switch: bool,
+    quic_port: Option<u16>,
 }
 
 fn exe_dir() -> Option<PathBuf> {
@@ -99,6 +112,9 @@ fn exe_dir() -> Option<PathBuf> {
 
 fn resolve(args: &BladeArgs) -> Result<Resolved> {
     let flags = &args.connect;
+    if let Some(path) = &flags.stop_file {
+        ensure!(path.is_absolute(), "--stop-file must be an absolute path");
+    }
     let mut profile = if let Some(name) = &flags.profile {
         profile::load(name)?
     } else if flags.host.is_some() || flags.secret_file.is_some() {
@@ -145,20 +161,12 @@ fn resolve(args: &BladeArgs) -> Result<Resolved> {
         profile.stats = stats;
     }
     profile.validate()?;
-
-    let server_ip = match profile.host.parse::<Ipv4Addr>() {
-        Ok(ip) => ip,
-        Err(_) => {
-            let addresses = (profile.host.as_str(), profile.port)
-                .to_socket_addrs()
-                .with_context(|| format!("resolving {}", profile.host))?
-                .find_map(|addr| match addr {
-                    std::net::SocketAddr::V4(v4) => Some(*v4.ip()),
-                    std::net::SocketAddr::V6(_) => None,
-                });
-            addresses.with_context(|| format!("{} resolved to no IPv4 address", profile.host))?
-        }
-    };
+    if flags.kill_switch {
+        ensure!(
+            profile.host.parse::<Ipv4Addr>().is_ok(),
+            "--kill-switch requires a pinned IPv4 host; use --server-name for TLS SNI. Unlock after a crash with `sslim blade unlock`."
+        );
+    }
 
     let key = key_from_bytes(&profile.secret()?);
     let wintun_dll = match &flags.wintun_dll {
@@ -185,10 +193,12 @@ fn resolve(args: &BladeArgs) -> Result<Resolved> {
     profile::set_last(&profile.name)?;
     Ok(Resolved {
         profile,
-        server_ip,
         key,
         wintun_dll: wintun_dll.canonicalize()?,
         route_script: route_script.canonicalize()?,
+        stop_file: flags.stop_file.clone(),
+        kill_switch: flags.kill_switch,
+        quic_port: flags.quic_port,
     })
 }
 
@@ -413,22 +423,80 @@ async fn report(counters: &Counters, enabled: bool) -> Result<()> {
     }
 }
 
-async fn connect_once(resolved: &Resolved) -> Result<()> {
+async fn wait_stop(path: Option<&Path>) {
+    loop {
+        if path.is_some_and(Path::exists) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+}
+
+trait TunnelIo: AsyncRead + AsyncWrite + Unpin {}
+impl<T: AsyncRead + AsyncWrite + Unpin> TunnelIo for T {}
+
+async fn open_transport(
+    resolved: &Resolved,
+    server_ip: Ipv4Addr,
+) -> Result<(Box<dyn TunnelIo>, Ipv4Addr, Option<crate::quic::Bridge>)> {
+    let profile = &resolved.profile;
+    if let Some(port) = resolved.quic_port {
+        ensure!(port != 0, "QUIC port must be positive");
+        if let Some((stream, bridge)) = crate::quic::connect_bridge(
+            std::net::SocketAddr::new(server_ip.into(), port),
+            &profile.server_name,
+            profile.ca_file.as_deref(),
+            &resolved.key,
+        )
+        .await?
+        {
+            println!("{OK_MARK} experimental QUIC transport (dedicated server TUN required)");
+            return Ok((Box::new(stream), Ipv4Addr::new(10, 253, 0, 2), Some(bridge)));
+        }
+        println!("{WARN_MARK} QUIC handshake timed out; trying TCP");
+    }
+    let (stream, address) = timeout(
+        Duration::from_secs(20),
+        connect_with_address(
+            &server_ip.to_string(),
+            profile.port,
+            &profile.server_name,
+            client_tls(profile.ca_file.as_deref())?,
+            &resolved.key,
+            &profile.marker,
+        ),
+    )
+    .await
+    .context("connection timed out")??;
+    Ok((Box::new(stream), address, None))
+}
+
+async fn connect_once(resolved: &Resolved, started: &mut Option<Instant>) -> Result<()> {
     let profile = &resolved.profile;
     println!(
         "connecting to {DIM}{}:{}{RESET} (SNI {DIM}{}{RESET})",
         profile.host, profile.port, profile.server_name
     );
-    let tls = client_tls(profile.ca_file.as_deref())?;
-    let (mut stream, address) = connect_with_address(
-        &profile.host,
-        profile.port,
-        &profile.server_name,
-        tls,
-        &resolved.key,
-        &profile.marker,
+    // Use exactly the resolved IPv4 for both the transport and route exclusion.
+    let server_ip = timeout(
+        Duration::from_secs(10),
+        tokio::net::lookup_host((profile.host.as_str(), profile.port)),
     )
-    .await?;
+    .await
+    .context("DNS resolution timed out")??
+    .find_map(|address| match address.ip() {
+        std::net::IpAddr::V4(ip) => Some(ip),
+        std::net::IpAddr::V6(_) => None,
+    })
+    .with_context(|| format!("{} resolved to no IPv4 address", profile.host))?;
+    if resolved.kill_switch {
+        crate::windows_filter::install(server_ip, None)?;
+    }
+    let (mut stream, address, _quic) = tokio::select! {
+        result = open_transport(resolved, server_ip) => result?,
+        _ = wait_stop(resolved.stop_file.as_deref()) => return Ok(()),
+        _ = tokio::signal::ctrl_c() => return Ok(()),
+    };
     println!("{OK_MARK} tunnel established, exit will be checked shortly");
 
     let file = &resolved.wintun_dll;
@@ -438,13 +506,17 @@ async fn connect_once(resolved: &Resolved) -> Result<()> {
         .context("could not create Wintun adapter; run from an elevated terminal")?;
     let session = Arc::new(adapter.start_session(4 * 1024 * 1024)?);
     let route_script = resolved.route_script.clone();
+    if resolved.kill_switch {
+        crate::windows_filter::install(server_ip, Some(adapter.get_adapter_index()?))?;
+    }
     configure(
         &route_script,
         adapter.get_adapter_index()?,
-        resolved.server_ip,
+        server_ip,
         address,
     )
     .await?;
+    *started = Some(Instant::now());
     let mut reader = Reader::start(session.clone())?;
     let counters = Counters::default();
     let (input, mut output) = io::split(&mut stream);
@@ -476,7 +548,7 @@ async fn connect_once(resolved: &Resolved) -> Result<()> {
             match frame {
                 (PACKET, packet) => send_wintun(&session, packet, &counters).await?,
                 (PING, _) => pong.send(()).await?,
-                (CLOSE, _) => return Ok(()),
+                (CLOSE, _) => anyhow::bail!("server closed the session"),
                 _ => {}
             }
         }
@@ -488,6 +560,7 @@ async fn connect_once(resolved: &Resolved) -> Result<()> {
         result = check => result,
         result = report(&counters, profile.stats) => result,
         result = tokio::signal::ctrl_c() => result.map_err(Into::into),
+        _ = wait_stop(resolved.stop_file.as_deref()) => Ok(()),
     };
     drop(reader);
     revert_routes(&route_script).await;
@@ -501,6 +574,11 @@ async fn connect_once(resolved: &Resolved) -> Result<()> {
 
 pub async fn run(args: BladeArgs) -> Result<()> {
     match args.command {
+        Some(BladeCommand::Unlock) => {
+            let _lock = crate::windows_filter::ConnectionLock::take()?;
+            crate::windows_filter::clear()?;
+            println!("Blade tunnel guard removed.");
+        }
         Some(BladeCommand::Import { source, name }) => {
             let mut profile = if source.starts_with("sslim://") {
                 Profile::from_uri(&source)?
@@ -577,21 +655,43 @@ pub async fn run(args: BladeArgs) -> Result<()> {
             }
         }
         None => {
+            let _lock = crate::windows_filter::ConnectionLock::take()?;
             let resolved = resolve(&args)?;
             let mut delay: u64 = 1;
             loop {
-                match connect_once(&resolved).await {
+                let mut started = None;
+                let result = connect_once(&resolved, &mut started).await;
+                if resolved.stop_file.as_deref().is_some_and(Path::exists) {
+                    if resolved.kill_switch {
+                        crate::windows_filter::clear()?;
+                    }
+                    return Ok(());
+                }
+                match result {
                     Ok(()) => {
-                        println!("{OK_MARK} session closed by the server; exiting");
+                        if resolved.kill_switch {
+                            crate::windows_filter::clear()?;
+                        }
+                        println!("{OK_MARK} client stopped");
                         return Ok(());
                     }
                     Err(error) => {
+                        if started.is_some_and(|time| time.elapsed() >= Duration::from_secs(60)) {
+                            delay = 1;
+                        }
                         eprintln!(
                             "{WARN_MARK} {error:#}{RESET}\n{DIM}reconnecting in {delay}s (Ctrl+C to quit){RESET}"
                         );
                         tokio::select! {
                             _ = tokio::time::sleep(Duration::from_secs(delay)) => {}
-                            _ = tokio::signal::ctrl_c() => return Ok(()),
+                            _ = tokio::signal::ctrl_c() => {
+                                if resolved.kill_switch { crate::windows_filter::clear()?; }
+                                return Ok(());
+                            },
+                            _ = wait_stop(resolved.stop_file.as_deref()) => {
+                                if resolved.kill_switch { crate::windows_filter::clear()?; }
+                                return Ok(());
+                            },
                         }
                         delay = (delay.saturating_mul(2)).min(RECONNECT_MAX_SECS);
                     }
@@ -701,6 +801,9 @@ pub async fn console() -> Result<()> {
         if let Err(error) = run(BladeArgs {
             command: None,
             connect: ConnectArgs {
+                quic_port: None,
+                kill_switch: false,
+                stop_file: None,
                 profile: Some(profile_name),
                 host: None,
                 port: None,

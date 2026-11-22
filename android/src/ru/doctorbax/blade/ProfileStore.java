@@ -29,9 +29,15 @@ public final class ProfileStore {
         public final String marker;
         public final byte[] secret;
         public final String caPem;
+        public final List<String> excludedPackages;
 
         Profile(String id, String name, String host, int port, String serverName,
                 String marker, byte[] secret, String caPem) {
+            this(id, name, host, port, serverName, marker, secret, caPem, null);
+        }
+
+        Profile(String id, String name, String host, int port, String serverName,
+                String marker, byte[] secret, String caPem, List<String> excludedPackages) {
             this.id = id;
             this.name = name;
             this.host = host;
@@ -40,6 +46,20 @@ public final class ProfileStore {
             this.marker = marker;
             this.secret = secret;
             this.caPem = caPem;
+            if (excludedPackages == null) {
+                this.excludedPackages = null;
+            } else {
+                List<String> valid = new ArrayList<>();
+                for (String packageName : excludedPackages) {
+                    if (packageName != null && packageName.matches(
+                            "[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+")
+                            && !valid.contains(packageName)) {
+                        valid.add(packageName);
+                        if (valid.size() == 100) break;
+                    }
+                }
+                this.excludedPackages = java.util.Collections.unmodifiableList(valid);
+            }
         }
 
         public String uri() {
@@ -89,6 +109,12 @@ public final class ProfileStore {
             if (secret.length < MIN_SECRET) return null;
             String host = item.optString("host", "");
             if (host.isEmpty()) return null;
+            List<String> excluded = new ArrayList<>();
+            JSONArray packages = item.optJSONArray("excludedPackages");
+            for (int i = 0; packages != null && i < packages.length(); i++) {
+                String name = packages.optString(i, "");
+                if (!name.isEmpty()) excluded.add(name);
+            }
             return new Profile(item.optString("id"),
                 item.optString("name", host),
                 host,
@@ -96,7 +122,7 @@ public final class ProfileStore {
                 item.optString("sni", host),
                 item.optString("marker", "sync/1"),
                 secret,
-                item.optString("caPem", null));
+                item.optString("caPem", null), excluded);
         } catch (Exception error) {
             return null;
         }
@@ -112,6 +138,7 @@ public final class ProfileStore {
         item.put("marker", profile.marker);
         item.put("secret", Base64.getEncoder().encodeToString(profile.secret));
         if (profile.caPem != null && !profile.caPem.isEmpty()) item.put("caPem", profile.caPem);
+        item.put("excludedPackages", new JSONArray(profile.excludedPackages));
         return item;
     }
 
@@ -156,7 +183,19 @@ public final class ProfileStore {
 
     public static synchronized Profile save(Context context, Profile profile) {
         load(context);
-        profiles.removeIf(existing -> existing.id.equals(profile.id));
+        if (profile.excludedPackages == null) {
+            List<String> excluded = new ArrayList<>();
+            for (Profile existing : profiles) {
+                if (existing.id.equals(profile.id) && existing.excludedPackages != null) {
+                    excluded.addAll(existing.excludedPackages);
+                    break;
+                }
+            }
+            profile = new Profile(profile.id, profile.name, profile.host, profile.port,
+                profile.serverName, profile.marker, profile.secret, profile.caPem, excluded);
+        }
+        final String savedId = profile.id;
+        profiles.removeIf(existing -> existing.id.equals(savedId));
         profiles.add(profile);
         activeId = profile.id;
         persist(context);

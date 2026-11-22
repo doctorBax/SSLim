@@ -3,20 +3,26 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, bail, ensure};
+#[cfg(target_os = "linux")]
+use anyhow::bail;
+use anyhow::{Context, Result, ensure};
 use bytes::{BufMut, Bytes, BytesMut};
 use clap::Subcommand;
-use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
+use quinn::crypto::rustls::QuicClientConfig;
+#[cfg(target_os = "linux")]
+use quinn::crypto::rustls::QuicServerConfig;
 use quinn::{Connection, Endpoint, TransportConfig};
 use ring::hmac;
+#[cfg(target_os = "linux")]
 use tokio::sync::Semaphore;
 use tokio::time::timeout;
 
+#[cfg(target_os = "linux")]
 use crate::auth::read_key;
+use crate::client_config;
 use crate::protocol::valid_ip;
-use crate::session::relay;
-use crate::tun::Tun;
-use crate::{client_config, client_tls, server_config};
+#[cfg(target_os = "linux")]
+use crate::{client_tls, server_config, session::relay, tun::Tun};
 
 const ALPN: &[u8] = b"sslim/2";
 const ALPN_V3: &[u8] = b"sslim/3";
@@ -206,6 +212,7 @@ impl DatagramReader {
     }
 }
 
+#[cfg(target_os = "linux")]
 async fn pump(conn: &Connection, tun: Tun) -> Result<()> {
     let uplink = async {
         let mut sequence = 0;
@@ -231,6 +238,7 @@ async fn pump(conn: &Connection, tun: Tun) -> Result<()> {
     }
 }
 
+#[cfg(target_os = "linux")]
 async fn handle(conn: Connection, key: Arc<hmac::Key>, tun_name: Option<String>) -> Result<()> {
     let (tun, mut send) = timeout(OPERATION_TIMEOUT, async {
         let (send, mut recv) = conn.accept_bi().await?;
@@ -257,6 +265,7 @@ async fn handle(conn: Connection, key: Arc<hmac::Key>, tun_name: Option<String>)
     }
 }
 
+#[cfg(target_os = "linux")]
 async fn server(
     listen: SocketAddr,
     cert: PathBuf,
@@ -304,6 +313,86 @@ fn client(address: SocketAddr, ca: Option<&std::path::Path>) -> Result<Endpoint>
     Ok(endpoint)
 }
 
+#[cfg(windows)]
+pub struct Bridge {
+    task: tokio::task::JoinHandle<()>,
+    endpoint: Endpoint,
+}
+
+#[cfg(windows)]
+impl Drop for Bridge {
+    fn drop(&mut self) {
+        self.task.abort();
+        self.endpoint.close(0u32.into(), b"client stopped");
+    }
+}
+
+/// Adapt QUIC packets to the existing framed client pump. None permits TCP
+/// fallback only on handshake timeout; certificate/authentication errors escape.
+#[cfg(windows)]
+pub async fn connect_bridge(
+    address: SocketAddr,
+    server_name: &str,
+    ca: Option<&std::path::Path>,
+    key: &hmac::Key,
+) -> Result<Option<(tokio::io::DuplexStream, Bridge)>> {
+    let endpoint = client(address, ca)?;
+    let handshake = endpoint.connect(address, server_name)?;
+    let conn = match timeout(OPERATION_TIMEOUT, handshake).await {
+        Ok(Ok(conn)) => conn,
+        Err(_) | Ok(Err(quinn::ConnectionError::TimedOut)) => return Ok(None),
+        Ok(Err(error)) => return Err(error.into()),
+    };
+    authenticate(&conn, key).await?;
+    let (local, remote) = tokio::io::duplex(128 * 1024);
+    let task = tokio::spawn(async move {
+        use crate::protocol::{CLOSE, FrameReader, PACKET, PING, PONG_FRAME, append_packet};
+        use tokio::io::AsyncWriteExt;
+        let (input, mut output) = tokio::io::split(remote);
+        let (pongs, mut control) = tokio::sync::mpsc::channel::<()>(16);
+        let uplink = async {
+            let mut frames = FrameReader::new(input);
+            let mut sequence = 0;
+            loop {
+                match frames.next().await? {
+                    (PACKET, packet) if packet.len() <= MTU => {
+                        send_packet(&conn, &mut sequence, packet).await?
+                    }
+                    (PING, _) => {
+                        pongs.send(()).await?;
+                    }
+                    (CLOSE, _) => return Ok::<_, anyhow::Error>(()),
+                    _ => {}
+                }
+            }
+        };
+        let downlink = async {
+            let mut reader = DatagramReader::new();
+            let mut frame = Vec::with_capacity(MTU + 3);
+            loop {
+                tokio::select! {
+                    Some(()) = control.recv() => output.write_all(PONG_FRAME).await?,
+                    packet = reader.read(&conn) => {
+                        frame.clear();
+                        append_packet(&mut frame, &packet?);
+                        output.write_all(&frame).await?;
+                    }
+                }
+            }
+            #[allow(unreachable_code)]
+            Ok::<_, anyhow::Error>(())
+        };
+        tokio::select! {
+            _ = uplink => {},
+            _ = downlink => {},
+            _ = conn.closed() => {},
+        }
+        conn.close(0u32.into(), b"packet bridge stopped");
+    });
+    Ok(Some((local, Bridge { task, endpoint })))
+}
+
+#[cfg(target_os = "linux")]
 pub async fn run(args: Args) -> Result<()> {
     match args.action {
         Action::Server {
@@ -337,8 +426,15 @@ pub async fn run(args: Args) -> Result<()> {
                     };
                     let host = address.ip().to_string();
                     let connector = client_tls(ca.as_deref())?;
-                    let stream =
-                        crate::session::connect(&host, port, &server_name, connector, &key, crate::profile::DEFAULT_MARKER).await?;
+                    let stream = crate::session::connect(
+                        &host,
+                        port,
+                        &server_name,
+                        connector,
+                        &key,
+                        crate::profile::DEFAULT_MARKER,
+                    )
+                    .await?;
                     println!("UDP handshake timed out; using TCP v1");
                     relay(stream, tun).await
                 }

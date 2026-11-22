@@ -41,17 +41,17 @@ impl KeyRing {
     }
 
     pub fn from_file(path: &Path) -> Result<Self> {
-        let text = std::fs::read_to_string(path)
-            .with_context(|| format!("reading {}", path.display()))?;
+        let text =
+            std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
         let mut keys = Vec::new();
         for (number, line) in text.lines().enumerate() {
             let line = line.trim();
             if line.is_empty() || line.starts_with('#') {
                 continue;
             }
-            let (label, secret) = line
-                .split_once(':')
-                .with_context(|| format!("{}:{}: expected label:base64", path.display(), number + 1))?;
+            let (label, secret) = line.split_once(':').with_context(|| {
+                format!("{}:{}: expected label:base64", path.display(), number + 1)
+            })?;
             let label = label.trim();
             ensure!(
                 !label.is_empty()
@@ -62,9 +62,13 @@ impl KeyRing {
                 path.display(),
                 number + 1
             );
-            let secret = BASE64
-                .decode(secret.trim())
-                .with_context(|| format!("{}:{}: secret is not valid base64", path.display(), number + 1))?;
+            let secret = BASE64.decode(secret.trim()).with_context(|| {
+                format!(
+                    "{}:{}: secret is not valid base64",
+                    path.display(),
+                    number + 1
+                )
+            })?;
             ensure!(
                 secret.len() >= 32,
                 "{}:{}: secret must be at least 32 bytes",
@@ -98,14 +102,23 @@ impl KeyRing {
         self.keys.is_empty()
     }
 
+    pub fn identities(&self) -> Vec<(String, [u8; 32])> {
+        self.keys
+            .iter()
+            .map(|(label, key)| (label.clone(), key_identity(key)))
+            .collect()
+    }
+
+    /// A process-local key identity, separate from authentication on the wire.
+    pub fn contains_key(&self, label: &str, identity: &[u8; 32]) -> bool {
+        self.keys
+            .iter()
+            .any(|(name, key)| name == label && key_identity(key) == *identity)
+    }
+
     /// Validate the presented credentials and identify the matching secret.
     /// Returns the label and the parsed time/nonce for replay bookkeeping.
-    pub fn verify<'a>(
-        &'a self,
-        time: &str,
-        nonce: &str,
-        tag: &str,
-    ) -> Option<Verified<'a>> {
+    pub fn verify<'a>(&'a self, time: &str, nonce: &str, tag: &str) -> Option<Verified<'a>> {
         let (parsed_time, nonce_bytes, tag_bytes) = parse_credentials(time, nonce, tag)?;
         for (label, key) in &self.keys {
             if hmac::verify(key, &message(parsed_time, nonce), &tag_bytes).is_ok() {
@@ -113,6 +126,7 @@ impl KeyRing {
                     label: label.as_str(),
                     time: parsed_time,
                     nonce: nonce_bytes,
+                    identity: key_identity(key),
                 });
             }
         }
@@ -124,6 +138,14 @@ pub struct Verified<'a> {
     pub label: &'a str,
     pub time: u64,
     pub nonce: [u8; 16],
+    pub identity: [u8; 32],
+}
+
+fn key_identity(key: &hmac::Key) -> [u8; 32] {
+    hmac::sign(key, b"SSLim internal session key identity v1")
+        .as_ref()
+        .try_into()
+        .expect("SHA256 tag length")
 }
 
 fn timestamp() -> u64 {
@@ -262,7 +284,10 @@ mod tests {
         let verified = ring.verify(&time.to_string(), &nonce, &tag).unwrap();
         let mut guard = ReplayGuard::default();
         assert!(guard.record(verified.nonce));
-        assert!(!guard.record(verified.nonce), "same nonce must not pass twice");
+        assert!(
+            !guard.record(verified.nonce),
+            "same nonce must not pass twice"
+        );
     }
 
     #[test]
@@ -290,7 +315,10 @@ mod tests {
         .unwrap();
         let ring = KeyRing::from_file(&path).unwrap();
         assert_eq!(ring.len(), 2);
-        assert!(ring.verify("1", &hex::encode([0u8; 16]), &hex::encode([0u8; 32])).is_none());
+        assert!(
+            ring.verify("1", &hex::encode([0u8; 16]), &hex::encode([0u8; 32]))
+                .is_none()
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 }

@@ -220,7 +220,9 @@ pub fn run(args: ClientAdminArgs) -> Result<Option<String>> {
                 "client {label:?} was not found"
             );
             write_entries(&secrets_file, &entries)?;
-            println!("Client {label:?} revoked. New connections will reject this key.");
+            println!(
+                "Client {label:?} revoked. A running server with --secrets-file observes changes within its 500 ms polling interval (plus file I/O), including active sessions."
+            );
             Ok(None)
         }
     }

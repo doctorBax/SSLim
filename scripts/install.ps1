@@ -7,7 +7,7 @@ param(
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
 $temporary = $null
-$required = @("sslim.exe", "blade-routes.ps1", "wintun.dll")
+$required = @("sslim.exe", "blade-routes.ps1", "blade-tray.ps1", "blade-diagnostics.ps1", "wintun.dll")
 
 try {
     if (-not $root -or @($required | Where-Object { -not (Test-Path -LiteralPath (Join-Path $root $_)) }).Count -gt 0) {
@@ -47,7 +47,7 @@ try {
 
     Write-Host "Blade is installed. Confirm the Windows administrator prompt to connect."
     if (-not $NoLaunch) {
-        Start-Process -FilePath (Join-Path $Destination "sslim.exe") `
+        Start-Process -FilePath "powershell.exe" -WindowStyle Hidden -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + (Join-Path $Destination 'blade-tray.ps1') + '"')) `
             -WorkingDirectory $Destination -Verb RunAs
     }
 } finally {
