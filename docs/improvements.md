@@ -8,7 +8,7 @@
 | Восстановление | Согласованный DNS/IP Windows, таймауты, сброс backoff; Android network callbacks, ping watchdog | Реальные сон/пробуждение и Wi-Fi/LTE, события сети Windows |
 | Отзыв ключей | Общий монитор TCP-сервера, закрытие старых сессий при remove/rotate, поколения ключей | Linux integration в CI; QUIC пока со статическим ключом |
 | Сертификаты | Сохранение CA key для новых установок, timer, проверка и откат leaf | Проверка systemd на стенде, миграция старого CA без ключа |
-| QUIC | Экспериментальный Windows Wintun-клиент к существующему QUIC v2, fallback по handshake timeout | Проверка внешней сети, Android QUIC/JNI, адресация нескольких клиентов QUIC |
+| QUIC | Экспериментальный Linux QUIC v3 и существующий TCP fallback | Windows/Android QUIC, адресация нескольких клиентов QUIC |
 | Blade | Трей, опциональный автозапуск трея, штатная остановка, диагностика с allowlist; Android исключения приложений | Windows split по процессам, сканирование QR, полноценный индикатор состояния туннеля |
 | Замеры | JSON harness iperf3 TCP/UDP, повторы, TCP connect p50/p95 и доступные CPU counters | Самостоятельные замеры LTE/WAN, задержка под нагрузкой, батарея Android |
 
@@ -30,15 +30,15 @@ WFP-транзакция устанавливает постоянные outboun
 
 WFP API: [условия на слоях](https://learn.microsoft.com/windows/win32/fwp/filtering-conditions-available-at-each-filtering-layer), [постоянные фильтры](https://learn.microsoft.com/windows/win32/api/fwpmtypes/ns-fwpmtypes-fwpm_filter0).
 
-## Windows QUIC
+## QUIC
 
 ```powershell
-sslim blade --profile home --quic-port 9543
+sslim quic client --address 203.0.113.10:9543 --server-name vpn.example.com --secret-file client.bin --fallback-tcp-port 9443
 ```
 
-Нужен отдельно настроенный Linux QUIC server с выделенным TUN и адресом клиента `10.253.0.2`; обычный TCP installer QUIC не включает. Для нескольких одновременных QUIC-клиентов общей адресации пока нет. TLS/аутентификационные ошибки не переключают на TCP: fallback разрешён только при таймауте QUIC handshake. После потери работающего транспорта клиент делает новую попытку. Android по-прежнему использует TLS/TCP.
+QUIC v3 доступен в Linux CLI и разделяет серверный пул адресов с TCP. Обычный установщик TCP не включает UDP-порт автоматически. TLS/аутентификационные ошибки не переключаются на TCP: fallback разрешён только при таймауте QUIC handshake. После потери работающего транспорта клиент делает новую попытку. Windows Blade и Android в этой версии используют TLS/TCP.
 
-QUIC bridge преобразует существующие packet frames в DATAGRAM через локальную bounded duplex-очередь. Это промежуточная архитектура, её накладные расходы нужно измерить. Локальные PONG в bridge обозначают работоспособность bridge, а QUIC соединение контролируется собственными keepalive/idle timeout.
+Linux QUIC преобразует IP-пакеты в DATAGRAM с фрагментацией и ограниченным reassembly. Его накладные расходы нужно измерять отдельно от TCP.
 
 ## Проверка перед выпуском
 

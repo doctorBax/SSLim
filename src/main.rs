@@ -12,7 +12,7 @@ mod client_admin;
 mod key_watch;
 mod profile;
 mod protocol;
-#[cfg(any(target_os = "linux", windows))]
+#[cfg(target_os = "linux")]
 mod quic;
 mod session;
 #[cfg(target_os = "linux")]

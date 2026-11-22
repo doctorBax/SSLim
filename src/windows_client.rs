@@ -438,23 +438,11 @@ impl<T: AsyncRead + AsyncWrite + Unpin> TunnelIo for T {}
 async fn open_transport(
     resolved: &Resolved,
     server_ip: Ipv4Addr,
-) -> Result<(Box<dyn TunnelIo>, Ipv4Addr, Option<crate::quic::Bridge>)> {
+) -> Result<(Box<dyn TunnelIo>, Ipv4Addr, Option<()>)> {
+    // The Windows binary uses the hardened TCP Blade path. QUIC v3 remains
+    // available through the Linux CLI until a Windows-native bridge is tested.
     let profile = &resolved.profile;
-    if let Some(port) = resolved.quic_port {
-        ensure!(port != 0, "QUIC port must be positive");
-        if let Some((stream, bridge)) = crate::quic::connect_bridge(
-            std::net::SocketAddr::new(server_ip.into(), port),
-            &profile.server_name,
-            profile.ca_file.as_deref(),
-            &resolved.key,
-        )
-        .await?
-        {
-            println!("{OK_MARK} experimental QUIC transport (dedicated server TUN required)");
-            return Ok((Box::new(stream), Ipv4Addr::new(10, 253, 0, 2), Some(bridge)));
-        }
-        println!("{WARN_MARK} QUIC handshake timed out; trying TCP");
-    }
+    let _ = resolved.quic_port;
     let (stream, address) = timeout(
         Duration::from_secs(20),
         connect_with_address(
