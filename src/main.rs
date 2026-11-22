@@ -1,11 +1,4 @@
 mod auth;
-mod tui;
-#[cfg(target_os = "linux")]
-mod transport_admin;
-#[cfg(target_os = "linux")]
-mod tui_linux;
-#[cfg(windows)]
-mod tui_windows;
 #[cfg(target_os = "linux")]
 mod client_admin;
 #[cfg(any(target_os = "linux", test))]
@@ -15,6 +8,13 @@ mod protocol;
 #[cfg(target_os = "linux")]
 mod quic;
 mod session;
+#[cfg(target_os = "linux")]
+mod transport_admin;
+mod tui;
+#[cfg(target_os = "linux")]
+mod tui_linux;
+#[cfg(windows)]
+mod tui_windows;
 #[cfg(target_os = "linux")]
 mod tun;
 #[cfg(windows)]
@@ -316,7 +316,8 @@ async fn dispatch_command(command: Command) -> Result<()> {
             );
             let server = Arc::new(Server {
                 acceptor: server_tls(&cert, &key)?,
-                keys: key_watch::start(ring, secrets_file),
+                ring,
+                secrets_file,
                 replay: Mutex::new(HashMap::new()),
                 device,
                 tun_name,
@@ -330,9 +331,17 @@ async fn dispatch_command(command: Command) -> Result<()> {
             // UDP is explicitly opt-in. The old TCP listener and all its
             // authentication responses remain unchanged.
             let _udp_server = if let Some(udp_port) = udp_port {
-                ensure!(matches!(device, Device::Tun) && multi_tun,
-                    "QUIC v3 requires --device tun --multi-tun");
-                Some(quic::start_shared(&host, udp_port, &cert, &key, server.clone())?)
+                ensure!(
+                    matches!(device, Device::Tun) && multi_tun,
+                    "QUIC v3 requires --device tun --multi-tun"
+                );
+                Some(quic::start_shared(
+                    &host,
+                    udp_port,
+                    &cert,
+                    &key,
+                    server.clone(),
+                )?)
             } else {
                 None
             };
